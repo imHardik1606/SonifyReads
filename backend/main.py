@@ -3,15 +3,25 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import io
 import re
+import edge_tts
+import asyncio
+import uuid
+from dotenv import load_dotenv
+import os
 
 app = FastAPI()
 
+load_dotenv()
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[FRONTEND_URL],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/")
 def health_check():
@@ -65,6 +75,20 @@ def is_front_matter(text: str) -> bool:
     return any(keyword in lowered for keyword in front_keywords)
 
 
+async def text_to_speech(text: str, voice="en-US-AriaNeural"):
+    filename = f"audio_{uuid.uuid4()}.mp3"
+
+    # Convert paragraph breaks into pauses
+    ssml_text = text.replace("\n\n", '<break time="800ms"/>')
+
+    communicate = edge_tts.Communicate(
+        text=ssml_text,
+        voice=voice
+    )
+
+    await communicate.save(filename)
+    return filename
+
 @app.post("/extract-text/")
 async def extract_text(file: UploadFile = File(...)):
     content = await file.read()
@@ -97,6 +121,15 @@ async def extract_text(file: UploadFile = File(...)):
             if content_started:
                 final_text.append(cleaned)
 
+    
+    text = "\n\n".join(final_text)
+
+    audio_file = await text_to_speech(
+        text = text,
+        voice = "en-US-GuyNeural"
+    )
+
     return {
-        "pdf_content": "\n\n".join(final_text)
+        "pdf_content": text,
+        "audio": audio_file
     }
