@@ -1,6 +1,7 @@
 import pdfplumber
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import io
 import re
 import edge_tts
@@ -86,8 +87,9 @@ async def text_to_speech(text: str, voice="en-US-AriaNeural"):
         voice=voice
     )
 
-    await communicate.save(filename)
-    return filename
+    async for chunk in communicate.stream():
+        if chunk['type'] == "audio":
+            yield chunk["data"]
 
 @app.post("/extract-text/")
 async def extract_text(file: UploadFile = File(...)):
@@ -124,12 +126,12 @@ async def extract_text(file: UploadFile = File(...)):
     
     text = "\n\n".join(final_text)
 
-    audio_file = await text_to_speech(
-        text = text,
-        voice = "en-US-GuyNeural"
-    )
-
-    return {
-        "pdf_content": text,
-        "audio": audio_file
+    headers = {
+        "Content-Disposition" : f'attachment; filename="{file.filename.rsplit(".",1)[0]}.mp3"'
     }
+
+    return StreamingResponse(
+        text_to_speech(text),
+        media_type="audio/mpeg",
+        headers=headers
+    )
