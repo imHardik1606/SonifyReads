@@ -1,27 +1,19 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import {
   Upload,
   Headphones,
   BookOpen,
-  Play,
-  Pause,
   CheckCircle,
   Sparkles,
-  Volume2,
   Shield,
   CloudUpload,
-  Download,
   X,
   Moon,
   Sun,
   FileAudio,
-  Waves,
   Zap,
-  BookText,
-  Music,
-  Globe,
   Mail,
   Loader2,
   AlertCircle,
@@ -29,20 +21,15 @@ import {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [text, setText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [conversionComplete, setConversionComplete] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const mediaSourceRef = useRef<MediaSource | null>(null);
 
   // Email validation function
   const validateEmail = (email: string) => {
@@ -65,45 +52,12 @@ export default function Home() {
     }
     
     setIsProcessing(true);
-    // Here you would typically send the email to your backend
-    // For now, we'll simulate a delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Close modal and start processing
-    setShowEmailModal(false);
-    setIsProcessing(false);
-    
-    // Start the actual PDF to audio conversion
-    startAudioConversion();
-  };
-
-  // Start the audio conversion process
-  const startAudioConversion = async () => {
-    if (!file) return;
-
-    setIsUploading(true);
-    setUploadProgress(0);
-    setError(null);
-    setAudioUrl(null);
-    setText("");
-    setConversionComplete(false);
-    setIsPlaying(false);
-
-    const progressInterval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return 90;
-        }
-        return prev + 5;
-      });
-    }, 300);
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("email", email); // Send email to backend
-
     try {
+      const formData = new FormData();
+      formData.append("file", file!);
+      formData.append("email", email);
+
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/convert-pdf-to-audio/`,
         {
@@ -112,154 +66,46 @@ export default function Home() {
         }
       );
 
-      if (!res.ok || !res.body) {
-        throw new Error(`Audio stream failed: ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || `Upload failed: ${res.status} ${res.statusText}`);
       }
 
+      // Simulate progress for better UX
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 95) {
+            clearInterval(progressInterval);
+            return 95;
+          }
+          return prev + 10;
+        });
+      }, 300);
+
+      // Process the response
+      const responseData = await res.json();
+      
       clearInterval(progressInterval);
-      setUploadProgress(95);
-
-      const mediaSource = new MediaSource();
-      mediaSourceRef.current = mediaSource;
-
-      const url = URL.createObjectURL(mediaSource);
-      setAudioUrl(url);
-
-      mediaSource.addEventListener("sourceopen", () => {
-        try {
-          const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
-          const reader = res.body!.getReader();
-
-          const processStream = async () => {
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                if (value) {
-                  const chunkArray = new Uint8Array(value);
-                  await appendChunk(sourceBuffer, chunkArray);
-                }
-              }
-
-              const waitForUpdate = (): Promise<void> => {
-                return new Promise<void>((resolve) => {
-                  if (sourceBuffer.updating) {
-                    const handler = () => {
-                      sourceBuffer.removeEventListener('updateend', handler);
-                      resolve();
-                    };
-                    sourceBuffer.addEventListener('updateend', handler);
-                  } else {
-                    resolve();
-                  }
-                });
-              };
-
-              await waitForUpdate();
-              mediaSource.endOfStream();
-              
-              setUploadProgress(100);
-              setConversionComplete(true);
-              setIsUploading(false);
-              setText(`"${file.name}" converted to audio successfully. Streaming ready!`);
-            } catch (err) {
-              console.error("Stream processing error:", err);
-              setError("Failed to process audio stream");
-              setIsUploading(false);
-            }
-          };
-
-          processStream();
-        } catch (err) {
-          console.error("Source buffer error:", err);
-          setError("Failed to initialize audio stream");
-          setIsUploading(false);
-        }
-      });
-
-      mediaSource.addEventListener("error", (e) => {
-        console.error("MediaSource error:", e);
-        setError("Audio stream error occurred");
-        setIsUploading(false);
-      });
-
+      setUploadProgress(100);
+      setConversionComplete(true);
+      setIsUploading(false);
+      setShowEmailModal(false);
+      setIsProcessing(false);
+      
+      console.log("Conversion started successfully:", responseData.message);
+      
     } catch (error) {
       console.error("Upload failed:", error);
       setError(error instanceof Error ? error.message : "Conversion failed");
-      setIsUploading(false);
+      setIsProcessing(false);
       setUploadProgress(0);
-      clearInterval(progressInterval);
     }
   };
 
-  // Modified upload function to show modal
   const handleUploadPdf = () => {
     if (!file) return;
     
     setShowEmailModal(true);
-  };
-
-  // Safe Source Buffer Append Function with Buffer Management
-  const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> => {
-    return new Promise<void>((resolve, reject) => {
-      const BUFFER_SIZE_LIMIT = 30 * 1024 * 1024;
-      const MAX_BUFFER_DURATION = 120;
-      
-      try {
-        if (sourceBuffer.buffered.length > 0) {
-          const currentTime = audioRef.current?.currentTime || 0;
-          const bufferStart = sourceBuffer.buffered.start(0);
-          const bufferEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-          
-          if (currentTime > 10 && bufferStart < currentTime - 10) {
-            try {
-              sourceBuffer.remove(bufferStart, currentTime - 10);
-            } catch (e) {
-              console.warn("Failed to remove old buffer:", e);
-            }
-          }
-          
-          if (bufferEnd - bufferStart > MAX_BUFFER_DURATION) {
-            const removeEnd = bufferStart + (bufferEnd - bufferStart - MAX_BUFFER_DURATION / 2);
-            try {
-              sourceBuffer.remove(bufferStart, Math.min(removeEnd, bufferEnd));
-            } catch (e) {
-              console.warn("Failed to trim buffer:", e);
-            }
-          }
-        }
-        
-        const onUpdateEnd = () => {
-          sourceBuffer.removeEventListener('updateend', onUpdateEnd);
-          resolve();
-        };
-
-        const onError = (err: Event) => {
-          sourceBuffer.removeEventListener('error', onError);
-          reject(err);
-        };
-
-        if (sourceBuffer.updating) {
-          sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-          sourceBuffer.addEventListener('error', onError, { once: true });
-        } else {
-          try {
-            const buffer = new ArrayBuffer(chunk.byteLength);
-            const view = new Uint8Array(buffer);
-            view.set(chunk);
-            
-            sourceBuffer.appendBuffer(buffer);
-            sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-            sourceBuffer.addEventListener('error', onError, { once: true });
-          } catch (err) {
-            reject(err);
-          }
-        }
-      } catch (err) {
-        reject(err);
-      }
-    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -267,71 +113,38 @@ export default function Home() {
     if (selectedFile) {
       setFile(selectedFile);
       setConversionComplete(false);
-      setAudioUrl(null);
-      setText("");
       setError(null);
-    }
-  };
-
-  const handlePlayAudio = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
+      setUploadProgress(0);
     }
   };
 
   const handleClearFile = () => {
     setFile(null);
-    setAudioUrl(null);
-    setText("");
     setConversionComplete(false);
     setError(null);
     setUploadProgress(0);
-  };
-
-  const handleDownloadAudio = () => {
-    if (audioUrl) {
-      setError(
-        "Live streaming download requires a separate endpoint. For download support, contact support."
-      );
-    }
   };
 
   const steps = [
     {
       number: "01",
       title: "Upload Ebook",
-      description: "Upload PDF, EPUB, or MOBI file",
+      description: "Upload PDF file",
       icon: <Upload className="h-5 w-5" />,
     },
     {
       number: "02",
       title: "AI Processing",
       description: "Convert text to natural speech",
-      icon: <Waves className="h-5 w-5" />,
+      icon: <Sparkles className="h-5 w-5" />,
     },
     {
       number: "03",
-      title: "Listen Anywhere",
-      description: "Download and enjoy your audio",
-      icon: <Headphones className="h-5 w-5" />,
+      title: "Receive via Email",
+      description: "Get audio file in your inbox",
+      icon: <Mail className="h-5 w-5" />,
     },
   ];
-
-  useEffect(() => {
-    return () => {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-      if (mediaSourceRef.current) {
-        mediaSourceRef.current = null;
-      }
-    };
-  }, [audioUrl]);
 
   return (
     <div className={`min-h-screen transition-all duration-500 font-sans ${
@@ -340,7 +153,7 @@ export default function Home() {
         : "bg-linear-to-br from-blue-50 via-white to-indigo-50/30 text-gray-900"
     }`}>
       <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=Montserrat:wght@300;400;500;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap"
         rel="stylesheet"
       />
       
@@ -499,14 +312,14 @@ export default function Home() {
                 ? "bg-white/10 border border-white/20 hover:bg-white/20"
                 : "bg-white/80 border border-white/20 hover:bg-white"
             } shadow-lg hover:shadow-xl`}>
-              <Music className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-purple-500" />
+              <Headphones className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-purple-500" />
             </div>
             <div>
               <span className="text-2xl font-bold bg-linear-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent font-display tracking-tight">
                 SonifyReads
               </span>
               <p className="text-xs mt-1 opacity-75 font-sans font-light tracking-wide">
-                REAL-TIME AUDIO STREAMING
+                PDF TO AUDIO CONVERTER
               </p>
             </div>
           </div>
@@ -541,20 +354,20 @@ export default function Home() {
             } shadow-lg animate-pulse`}>
               <Sparkles className="h-4 w-4 text-blue-500 animate-spin-slow" />
               <span className="font-medium bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent font-sans tracking-wide text-sm">
-                Real-Time Audio Streaming
+                PDF to Audio Converter
               </span>
             </div>
 
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6 max-w-5xl mx-auto animate-slide-up leading-tight font-display">
               <span className="bg-linear-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                Stream Words
+                Convert PDFs
               </span>
               <br />
               <span className={darkMode ? "text-white" : "text-gray-900"}>
                 Into{" "}
                 <span className="relative inline-block">
                   <span className="relative z-10 bg-linear-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
-                    Live Audio
+                    Audio Files
                   </span>
                   <div className="absolute -bottom-2 left-0 right-0 h-1 bg-linear-to-r from-blue-500 to-purple-500 rounded-full opacity-75"></div>
                 </span>
@@ -564,35 +377,8 @@ export default function Home() {
             <p className={`text-lg md:text-xl mb-10 max-w-3xl mx-auto animate-slide-up delay-100 leading-relaxed font-body ${
               darkMode ? "text-gray-300/90" : "text-gray-600/90"
             }`}>
-              Convert documents into streaming audio experiences. Listen as your content is processed in real-time with AI-powered narration.
+              Upload your PDF and receive a high-quality audio file via email. Perfect for listening on the go.
             </p>
-
-            <div className="flex flex-wrap justify-center gap-4 mb-8">
-              <div className={`px-4 py-2 rounded-full backdrop-blur-sm ${
-                darkMode ? "bg-white/5" : "bg-white/50"
-              }`}>
-                <span className="text-sm font-medium flex items-center gap-2">
-                  <Waves className="h-4 w-4 text-blue-500" />
-                  Live Streaming
-                </span>
-              </div>
-              <div className={`px-4 py-2 rounded-full backdrop-blur-sm ${
-                darkMode ? "bg-white/5" : "bg-white/50"
-              }`}>
-                <span className="text-sm font-medium flex items-center gap-2">
-                  <Globe className="h-4 w-4 text-purple-500" />
-                  40+ Languages
-                </span>
-              </div>
-              <div className={`px-4 py-2 rounded-full backdrop-blur-sm ${
-                darkMode ? "bg-white/5" : "bg-white/50"
-              }`}>
-                <span className="text-sm font-medium flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-yellow-500" />
-                  Real-time Processing
-                </span>
-              </div>
-            </div>
           </section>
 
           {/* Main Conversion Section */}
@@ -611,11 +397,11 @@ export default function Home() {
                     <CloudUpload className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent" />
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold font-heading">Stream Your Document</h2>
+                    <h2 className="text-2xl font-bold font-heading">Convert Your PDF</h2>
                     <p className={`text-sm mt-1 ${
                       darkMode ? "text-gray-400" : "text-gray-600"
                     }`}>
-                      Upload and stream audio in real-time
+                      Upload and receive audio via email
                     </p>
                   </div>
                 </div>
@@ -642,7 +428,7 @@ export default function Home() {
                             <p className={`text-sm mb-4 font-medium ${
                               darkMode ? "text-gray-400" : "text-gray-500"
                             }`}>
-                              {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to stream
+                              {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to convert
                             </p>
                             <button
                               onClick={(e) => {
@@ -666,19 +452,19 @@ export default function Home() {
                             <p className={`mb-2 text-lg text-center font-heading ${
                               darkMode ? "text-gray-100" : "text-gray-700"
                             }`}>
-                              <span className="font-bold">Drop your file here</span>
+                              <span className="font-bold">Drop your PDF here</span>
                             </p>
                             <p className={`text-sm text-center max-w-xs ${
                               darkMode ? "text-gray-400" : "text-gray-500"
                             }`}>
-                              Supports PDF, EPUB, DOCX up to 50MB
+                              Supports PDF up to 50MB
                             </p>
                             <div className={`mt-4 px-4 py-2 rounded-lg text-sm font-medium ${
                               darkMode ? "bg-white/10" : "bg-blue-500/10"
                             }`}>
                               <span className="flex items-center gap-2">
                                 <Shield className="h-3 w-3" />
-                                Secure & private streaming
+                                Secure & private processing
                               </span>
                             </div>
                           </>
@@ -686,7 +472,7 @@ export default function Home() {
                       </div>
                       <input
                         type="file"
-                        accept=".pdf,.epub,.docx,application/pdf"
+                        accept=".pdf,application/pdf"
                         className="hidden"
                         onChange={handleFileChange}
                       />
@@ -714,7 +500,7 @@ export default function Home() {
                     }`}>
                       <div className="flex justify-between text-sm mb-2 font-medium">
                         <span className={darkMode ? "text-gray-300" : "text-gray-700"}>
-                          {uploadProgress >= 95 ? "Finalizing stream..." : "Streaming audio..."}
+                          {uploadProgress >= 95 ? "Finalizing..." : "Processing..."}
                         </span>
                         <span className="font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent">
                           {uploadProgress.toFixed(0)}%
@@ -730,7 +516,7 @@ export default function Home() {
                       </div>
                       {uploadProgress >= 95 && (
                         <p className="text-xs mt-2 text-center text-blue-500">
-                          Audio streaming will begin shortly...
+                          Audio will be sent to your email shortly...
                         </p>
                       )}
                     </div>
@@ -750,100 +536,39 @@ export default function Home() {
                       {isUploading ? (
                         <>
                           <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3"></div>
-                          Streaming...
+                          Processing...
                         </>
                       ) : conversionComplete ? (
                         <>
                           <CheckCircle className="h-6 w-6 mr-3" />
-                          Stream Complete!
+                          Conversion Started!
                         </>
                       ) : (
                         <>
                           <Headphones className="h-6 w-6 mr-3 group-hover:scale-110 transition-transform" />
-                          Stream Audio
+                          Convert to Audio
                         </>
                       )}
                     </span>
                   </button>
 
-                  {conversionComplete && audioUrl && (
-                    <div className="grid grid-cols-2 gap-3 animate-fade-in">
-                      <button
-                        onClick={handlePlayAudio}
-                        className="py-3 bg-linear-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium transition-all duration-300 hover:shadow-green-500/25 hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center group relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-linear-to-r from-emerald-500 to-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                        <span className="relative z-10 flex items-center">
-                          {isPlaying ? (
-                            <>
-                              <Pause className="h-5 w-5 mr-2" />
-                              Pause Audio
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-5 w-5 mr-2" />
-                              Play Stream
-                            </>
-                          )}
-                        </span>
-                      </button>
-                      <button
-                        onClick={handleDownloadAudio}
-                        className="py-3 bg-linear-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium transition-all duration-300 hover:shadow-purple-500/25 hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center group relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-linear-to-r from-pink-500 to-purple-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                        <span className="relative z-10 flex items-center">
-                          <Download className="h-5 w-5 mr-2" />
-                          Download
-                        </span>
-                      </button>
+                  {conversionComplete && (
+                    <div className={`p-4 rounded-xl border backdrop-blur-sm ${
+                      darkMode
+                        ? "bg-green-500/10 border-green-500/20"
+                        : "bg-green-50 border-green-200"
+                    }`}>
+                      <div className="flex items-center text-green-600">
+                        <CheckCircle className="h-5 w-5 mr-2 shrink-0" />
+                        <span className="font-medium">Conversion started! Check your email for the audio file.</span>
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Right Column - Audio Player & Steps */}
+              {/* Right Column - Steps & Features */}
               <div className="space-y-6">
-                {/* Audio Player
-                {audioUrl && (
-                  <div className={`rounded-3xl p-6 backdrop-blur-lg shadow-2xl transition-all duration-300 border ${
-                    darkMode
-                      ? "bg-linear-to-br from-blue-500/15 to-purple-500/10 border-white/10"
-                      : "bg-linear-to-br from-blue-500/10 to-purple-500/5 border-white/20"
-                  }`}>
-                    <h3 className="text-xl font-bold mb-4 flex items-center font-heading">
-                      <Volume2 className="h-5 w-5 mr-2 text-blue-500 animate-pulse" />
-                      Live Audio Stream
-                    </h3>
-                    <div className="space-y-4">
-                      <div className={`rounded-xl p-4 ${
-                        darkMode ? "bg-white/10" : "bg-white/60"
-                      }`}>
-                        <audio
-                          ref={audioRef}
-                          src={audioUrl}
-                          controls
-                          controlsList="nodownload"
-                          className="w-full [&::-webkit-media-controls-panel]:bg-linear-to-r [&::-webkit-media-controls-panel]:from-blue-500 [&::-webkit-media-controls-panel]:to-purple-500"
-                          onPlay={() => setIsPlaying(true)}
-                          onPause={() => setIsPlaying(false)}
-                          onEnded={() => setIsPlaying(false)}
-                        />
-                      </div>
-                      <div className={`flex items-center p-4 rounded-xl backdrop-blur-sm ${
-                        darkMode ? "bg-white/5" : "bg-white/30"
-                      }`}>
-                        <Waves className="h-5 w-5 mr-3 text-purple-500 shrink-0 animate-pulse" />
-                        <span className="font-medium">
-                          {conversionComplete 
-                            ? "Stream complete! Audio ready for playback." 
-                            : "Processing stream... Audio will play as it loads."}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )} */}
-
                 {/* Steps */}
                 <div className={`rounded-3xl p-6 backdrop-blur-lg shadow-xl border ${
                   darkMode
@@ -851,7 +576,7 @@ export default function Home() {
                     : "bg-linear-to-br from-white/80 to-white/60 border-white/20"
                 }`}>
                   <h3 className="text-2xl font-bold mb-8 font-heading">
-                    How Streaming Works
+                    How It Works
                     <div className="h-1 w-16 bg-linear-to-r from-blue-500 to-purple-500 rounded-full mt-2"></div>
                   </h3>
                   <div className="space-y-6">
@@ -900,39 +625,39 @@ export default function Home() {
                     ? "bg-linear-to-br from-white/5 to-white/2 border-white/10"
                     : "bg-linear-to-br from-white/80 to-white/60 border-white/20"
                 }`}>
-                  <h3 className="text-xl font-bold mb-4 font-heading">Streaming Features</h3>
+                  <h3 className="text-xl font-bold mb-4 font-heading">Features</h3>
                   <div className="grid grid-cols-2 gap-3">
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        Live
+                        Fast
                       </div>
-                      <div className="text-xs font-medium">Streaming</div>
+                      <div className="text-xs font-medium">Processing</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        50+
+                        High
                       </div>
-                      <div className="text-xs font-medium">Voices</div>
+                      <div className="text-xs font-medium">Quality</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        <Waves className="inline h-5 w-5" />
+                        <Zap className="inline h-5 w-5" />
                       </div>
-                      <div className="text-xs font-medium">Real-time</div>
+                      <div className="text-xs font-medium">Email Delivery</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        24/7
+                        Secure
                       </div>
-                      <div className="text-xs font-medium">Support</div>
+                      <div className="text-xs font-medium">Processing</div>
                     </div>
                   </div>
                 </div>
@@ -956,7 +681,7 @@ export default function Home() {
                   <div className={`p-2 rounded-lg ${
                     darkMode ? "bg-white/10" : "bg-white/60"
                   }`}>
-                    <Music className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-purple-500" />
+                    <Headphones className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-purple-500" />
                   </div>
                   <div>
                     <span className="text-xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent font-display">
@@ -965,7 +690,7 @@ export default function Home() {
                     <p className={`text-xs mt-1 font-light tracking-wider ${
                       darkMode ? "text-gray-400" : "text-gray-500"
                     }`}>
-                      Real-time audio streaming
+                      PDF to Audio Converter
                     </p>
                   </div>
                 </div>
