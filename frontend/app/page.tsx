@@ -22,6 +22,9 @@ import {
   BookText,
   Music,
   Globe,
+  Mail,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 export default function Home() {
@@ -34,108 +37,48 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [email, setEmail] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const mediaSourceRef = useRef<MediaSource | null>(null);
 
-  // // Safe Source Buffer Append Function
-  // const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> => {
-  //   return new Promise<void>((resolve, reject) => {
-  //     const onUpdateEnd = () => {
-  //       sourceBuffer.removeEventListener('updateend', onUpdateEnd);
-  //       resolve();
-  //     };
+  // Email validation function
+  const validateEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
 
-  //     const onError = (err: Event) => {
-  //       sourceBuffer.removeEventListener('error', onError);
-  //       reject(err);
-  //     };
-
-  //     if (sourceBuffer.updating) {
-  //       sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-  //       sourceBuffer.addEventListener('error', onError, { once: true });
-  //     } else {
-  //       try {
-  //         // Create a new ArrayBuffer from the chunk to avoid SharedArrayBuffer issues
-  //         const buffer = new Uint8Array(chunk).buffer;
-  //         sourceBuffer.appendBuffer(buffer);
-  //         resolve();
-  //       } catch (err) {
-  //         reject(err);
-  //       }
-  //     }
-  //   });
-  // };
-
-  // Safe Source Buffer Append Function with Buffer Management
-const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> => {
-  return new Promise<void>((resolve, reject) => {
-    // Buffer size management - remove old data if buffer is too full
-    const BUFFER_SIZE_LIMIT = 30 * 1024 * 1024; // 30MB limit
-    const MAX_BUFFER_DURATION = 120; // Maximum buffer duration in seconds
+  // Handle email submission
+  const handleEmailSubmit = async () => {
+    setEmailError("");
     
-    try {
-      // Check if we need to remove old buffers
-      if (sourceBuffer.buffered.length > 0) {
-        const currentTime = audioRef.current?.currentTime || 0;
-        const bufferStart = sourceBuffer.buffered.start(0);
-        const bufferEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-        
-        // Remove played content (keep 10 seconds before current time)
-        if (currentTime > 10 && bufferStart < currentTime - 10) {
-          try {
-            sourceBuffer.remove(bufferStart, currentTime - 10);
-          } catch (e) {
-            console.warn("Failed to remove old buffer:", e);
-          }
-        }
-        
-        // Check if buffer duration exceeds limit
-        if (bufferEnd - bufferStart > MAX_BUFFER_DURATION) {
-          const removeEnd = bufferStart + (bufferEnd - bufferStart - MAX_BUFFER_DURATION / 2);
-          try {
-            sourceBuffer.remove(bufferStart, Math.min(removeEnd, bufferEnd));
-          } catch (e) {
-            console.warn("Failed to trim buffer:", e);
-          }
-        }
-      }
-      
-      const onUpdateEnd = () => {
-        sourceBuffer.removeEventListener('updateend', onUpdateEnd);
-        resolve();
-      };
-
-      const onError = (err: Event) => {
-        sourceBuffer.removeEventListener('error', onError);
-        reject(err);
-      };
-
-      if (sourceBuffer.updating) {
-        sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-        sourceBuffer.addEventListener('error', onError, { once: true });
-      } else {
-        try {
-          // FIX: Create a new ArrayBuffer instead of using chunk.buffer directly
-          // This ensures we have a proper ArrayBuffer, not a SharedArrayBuffer
-          const buffer = new ArrayBuffer(chunk.byteLength);
-          const view = new Uint8Array(buffer);
-          view.set(chunk); // Copy the chunk data into the new buffer
-          
-          sourceBuffer.appendBuffer(buffer);
-          sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-          sourceBuffer.addEventListener('error', onError, { once: true });
-        } catch (err) {
-          reject(err);
-        }
-      }
-    } catch (err) {
-      reject(err);
+    if (!email.trim()) {
+      setEmailError("Email is required");
+      return;
     }
-  });
-};
+    
+    if (!validateEmail(email)) {
+      setEmailError("Please enter a valid email address");
+      return;
+    }
+    
+    setIsProcessing(true);
+    // Here you would typically send the email to your backend
+    // For now, we'll simulate a delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Close modal and start processing
+    setShowEmailModal(false);
+    setIsProcessing(false);
+    
+    // Start the actual PDF to audio conversion
+    startAudioConversion();
+  };
 
-  // Upload & Stream PDF to Audio
-  const uploadPdf = async () => {
+  // Start the audio conversion process
+  const startAudioConversion = async () => {
     if (!file) return;
 
     setIsUploading(true);
@@ -158,10 +101,11 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("email", email); // Send email to backend
 
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/extract-text/`,
+        `${process.env.NEXT_PUBLIC_API_URL}/convert-pdf-to-audio/`,
         {
           method: "POST",
           body: formData,
@@ -193,13 +137,11 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
                 if (done) break;
 
                 if (value) {
-                  // Create a new Uint8Array from the ReadableStream chunk
                   const chunkArray = new Uint8Array(value);
                   await appendChunk(sourceBuffer, chunkArray);
                 }
               }
 
-              // Wait for final buffer to finish updating
               const waitForUpdate = (): Promise<void> => {
                 return new Promise<void>((resolve) => {
                   if (sourceBuffer.updating) {
@@ -236,7 +178,6 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
         }
       });
 
-      // Handle media source errors
       mediaSource.addEventListener("error", (e) => {
         console.error("MediaSource error:", e);
         setError("Audio stream error occurred");
@@ -250,6 +191,75 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
       setUploadProgress(0);
       clearInterval(progressInterval);
     }
+  };
+
+  // Modified upload function to show modal
+  const handleUploadPdf = () => {
+    if (!file) return;
+    
+    setShowEmailModal(true);
+  };
+
+  // Safe Source Buffer Append Function with Buffer Management
+  const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> => {
+    return new Promise<void>((resolve, reject) => {
+      const BUFFER_SIZE_LIMIT = 30 * 1024 * 1024;
+      const MAX_BUFFER_DURATION = 120;
+      
+      try {
+        if (sourceBuffer.buffered.length > 0) {
+          const currentTime = audioRef.current?.currentTime || 0;
+          const bufferStart = sourceBuffer.buffered.start(0);
+          const bufferEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
+          
+          if (currentTime > 10 && bufferStart < currentTime - 10) {
+            try {
+              sourceBuffer.remove(bufferStart, currentTime - 10);
+            } catch (e) {
+              console.warn("Failed to remove old buffer:", e);
+            }
+          }
+          
+          if (bufferEnd - bufferStart > MAX_BUFFER_DURATION) {
+            const removeEnd = bufferStart + (bufferEnd - bufferStart - MAX_BUFFER_DURATION / 2);
+            try {
+              sourceBuffer.remove(bufferStart, Math.min(removeEnd, bufferEnd));
+            } catch (e) {
+              console.warn("Failed to trim buffer:", e);
+            }
+          }
+        }
+        
+        const onUpdateEnd = () => {
+          sourceBuffer.removeEventListener('updateend', onUpdateEnd);
+          resolve();
+        };
+
+        const onError = (err: Event) => {
+          sourceBuffer.removeEventListener('error', onError);
+          reject(err);
+        };
+
+        if (sourceBuffer.updating) {
+          sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
+          sourceBuffer.addEventListener('error', onError, { once: true });
+        } else {
+          try {
+            const buffer = new ArrayBuffer(chunk.byteLength);
+            const view = new Uint8Array(buffer);
+            view.set(chunk);
+            
+            sourceBuffer.appendBuffer(buffer);
+            sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
+            sourceBuffer.addEventListener('error', onError, { once: true });
+          } catch (err) {
+            reject(err);
+          }
+        }
+      } catch (err) {
+        reject(err);
+      }
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -340,6 +350,145 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
         <div className="absolute top-1/3 -left-20 w-60 h-60 bg-purple-500/10 rounded-full blur-3xl animate-pulse delay-1000"></div>
         <div className="absolute bottom-1/4 right-1/3 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl animate-pulse delay-500"></div>
       </div>
+
+      {/* Email Modal */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => !isProcessing && setShowEmailModal(false)}
+          />
+          
+          {/* Modal */}
+          <div className={`relative z-10 w-full max-w-md rounded-3xl p-8 backdrop-blur-lg shadow-2xl border transition-all duration-300 animate-slide-up ${
+            darkMode
+              ? "bg-linear-to-br from-white/5 to-white/2 border-white/10"
+              : "bg-linear-to-br from-white/90 to-white/70 border-white/30"
+          }`}>
+            {/* Close Button */}
+            {!isProcessing && (
+              <button
+                onClick={() => setShowEmailModal(false)}
+                className={`absolute top-4 right-4 p-2 rounded-lg transition-all duration-300 ${
+                  darkMode
+                    ? "bg-white/10 hover:bg-white/20 border border-white/20"
+                    : "bg-white/80 hover:bg-white border border-gray-200"
+                } shadow-lg hover:shadow-xl hover:scale-105`}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
+
+            <div className="flex items-center space-x-3 mb-6">
+              <div className={`p-3 rounded-xl ${
+                darkMode ? "bg-white/10" : "bg-white/60"
+              }`}>
+                <Mail className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold font-heading">Processing Your Audio</h2>
+                <p className={`text-sm mt-1 ${
+                  darkMode ? "text-gray-400" : "text-gray-600"
+                }`}>
+                  We'll email you when it's ready
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className={`p-4 rounded-xl ${
+                darkMode ? "bg-blue-500/10 border border-blue-500/20" : "bg-blue-50/50 border border-blue-200"
+              }`}>
+                <div className="flex items-start space-x-3">
+                  <AlertCircle className={`h-5 w-5 mt-0.5 ${darkMode ? "text-blue-400" : "text-blue-500"}`} />
+                  <div>
+                    <p className={`text-sm font-medium ${darkMode ? "text-blue-300" : "text-blue-700"}`}>
+                      This may take a few minutes
+                    </p>
+                    <p className={`text-xs mt-1 ${darkMode ? "text-blue-400/80" : "text-blue-600/80"}`}>
+                      Your PDF is being converted to audio. Enter your email and we'll send you the audio file when it's ready.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${
+                    darkMode ? "text-gray-300" : "text-gray-700"
+                  }`}>
+                    Email Address
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      disabled={isProcessing}
+                      className={`w-full px-4 py-3 rounded-xl transition-all duration-300 ${
+                        darkMode
+                          ? "bg-white/10 border border-white/20 focus:border-blue-500 text-white"
+                          : "bg-white/60 border border-gray-200 focus:border-blue-400 text-gray-900"
+                      } focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed`}
+                      placeholder="you@example.com"
+                    />
+                    <Mail className={`absolute right-3 top-3 h-5 w-5 ${
+                      darkMode ? "text-gray-400" : "text-gray-400"
+                    } ${isProcessing ? "opacity-50" : ""}`} />
+                  </div>
+                  {emailError && (
+                    <p className="text-red-500 text-sm mt-2 flex items-center">
+                      <X className="h-4 w-4 mr-1" /> {emailError}
+                    </p>
+                  )}
+                </div>
+
+                <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+                  <p>We'll send the audio file to this email address once conversion is complete.</p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3 pt-2">
+                {!isProcessing && (
+                  <button
+                    onClick={() => setShowEmailModal(false)}
+                    className={`flex-1 py-3 rounded-xl font-medium transition-all duration-300 ${
+                      darkMode
+                        ? "bg-white/10 hover:bg-white/20 border border-white/20"
+                        : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button
+                  onClick={handleEmailSubmit}
+                  disabled={isProcessing}
+                  className={`flex-1 py-3 rounded-xl font-medium transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg ${
+                    isProcessing
+                      ? "bg-linear-to-r from-blue-500 to-purple-500"
+                      : "bg-linear-to-r from-blue-500 to-purple-500 hover:shadow-blue-500/25 hover:shadow-xl hover:-translate-y-0.5"
+                  } text-white relative overflow-hidden group`}
+                >
+                  {isProcessing ? (
+                    <span className="flex items-center justify-center">
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                      Processing...
+                    </span>
+                  ) : (
+                    <span className="relative z-10 flex items-center justify-center">
+                      <CheckCircle className="h-5 w-5 mr-2" />
+                      Start Conversion
+                    </span>
+                  )}
+                  <div className="absolute inset-0 bg-linear-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <header className="relative px-4 py-6 md:px-8 lg:px-16">
@@ -588,7 +737,7 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
                   )}
 
                   <button
-                    onClick={uploadPdf}
+                    onClick={handleUploadPdf}
                     disabled={!file || isUploading}
                     className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center group relative overflow-hidden font-heading ${
                       conversionComplete
@@ -655,7 +804,7 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
 
               {/* Right Column - Audio Player & Steps */}
               <div className="space-y-6">
-                {/* Audio Player */}
+                {/* Audio Player
                 {audioUrl && (
                   <div className={`rounded-3xl p-6 backdrop-blur-lg shadow-2xl transition-all duration-300 border ${
                     darkMode
@@ -693,7 +842,7 @@ const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<voi
                       </div>
                     </div>
                   </div>
-                )}
+                )} */}
 
                 {/* Steps */}
                 <div className={`rounded-3xl p-6 backdrop-blur-lg shadow-xl border ${
