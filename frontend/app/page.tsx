@@ -522,13 +522,13 @@ export default function Home() {
               <div className="relative inline-block mb-6">
                 <div className={`h-20 w-20 rounded-full flex items-center justify-center ${
                   darkMode 
-                    ? "bg-gradient-to-br from-green-500/20 to-emerald-500/20" 
-                    : "bg-gradient-to-br from-green-50 to-emerald-50"
+                    ? "bg-linear-to-br from-green-500/20 to-emerald-500/20" 
+                    : "bg-linear-to-br from-green-50 to-emerald-50"
                 } animate-scale-up`}>
                   <div className={`h-16 w-16 rounded-full flex items-center justify-center ${
                     darkMode 
-                      ? "bg-gradient-to-br from-green-500/30 to-emerald-500/30" 
-                      : "bg-gradient-to-br from-green-100 to-emerald-100"
+                      ? "bg-linear-to-br from-green-500/30 to-emerald-500/30" 
+                      : "bg-linear-to-br from-green-100 to-emerald-100"
                   }`}>
                     <CheckCircle className="h-10 w-10 text-green-500 animate-bounce" />
                   </div>
@@ -578,15 +578,15 @@ export default function Home() {
                   }}
                   className={`flex-1 py-3 rounded-xl font-medium transition-all duration-300 shadow-lg ${
                     darkMode
-                      ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
-                      : "bg-gradient-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
+                      ? "bg-linear-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
+                      : "bg-linear-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
                   } text-white hover:shadow-xl hover:-translate-y-0.5 relative overflow-hidden group`}
                 >
                   <span className="relative z-10 flex items-center justify-center">
                     <Upload className="h-5 w-5 mr-2" />
                     Upload Another File
                   </span>
-                  <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 to-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                  <div className="absolute inset-0 bg-linear-to-r from-emerald-500 to-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                 </button>
                 
                 <button
