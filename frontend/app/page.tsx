@@ -25,13 +25,14 @@ import {
   Mail,
   Loader2,
   AlertCircle,
+  Send,
+  Clock,
 } from "lucide-react";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [conversionComplete, setConversionComplete] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -42,8 +43,8 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string>("");
   const audioRef = useRef<HTMLAudioElement>(null);
-  const mediaSourceRef = useRef<MediaSource | null>(null);
 
   // Email validation function
   const validateEmail = (email: string) => {
@@ -65,55 +66,17 @@ export default function Home() {
       return;
     }
     
+    if (!file) {
+      setEmailError("Please upload a file first");
+      return;
+    }
+    
     setIsProcessing(true);
-    // Here you would typically send the email to your backend
-    // For now, we'll simulate a delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    setProcessingStatus("Uploading PDF...");
     
-    // Close modal and show confirmation
-    setShowEmailModal(false);
-    setIsProcessing(false);
-    setShowConfirmationModal(true);
-    
-    // Clear the uploaded file
-    setFile(null);
-    
-    // Reset upload progress and states
-    setIsUploading(false);
-    setUploadProgress(0);
-    setConversionComplete(false);
-    setAudioUrl(null);
-    setText("");
-    
-    // You would typically make the actual API call here
-    // startAudioConversion();
-  };
-
-  // Start the audio conversion process
-  const startAudioConversion = async () => {
-    if (!file) return;
-
-    setIsUploading(true);
-    setUploadProgress(0);
-    setError(null);
-    setAudioUrl(null);
-    setText("");
-    setConversionComplete(false);
-    setIsPlaying(false);
-
-    const progressInterval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 90) {
-          clearInterval(progressInterval);
-          return 90;
-        }
-        return prev + 5;
-      });
-    }, 300);
-
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("email", email); // Send email to backend
+    formData.append("email", email);
 
     try {
       const res = await fetch(
@@ -124,165 +87,58 @@ export default function Home() {
         }
       );
 
-      if (!res.ok || !res.body) {
-        throw new Error(`Audio stream failed: ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
       }
 
-      clearInterval(progressInterval);
-      setUploadProgress(95);
-
-      const mediaSource = new MediaSource();
-      mediaSourceRef.current = mediaSource;
-
-      const url = URL.createObjectURL(mediaSource);
-      setAudioUrl(url);
-
-      mediaSource.addEventListener("sourceopen", () => {
-        try {
-          const sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
-          const reader = res.body!.getReader();
-
-          const processStream = async () => {
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                if (value) {
-                  const chunkArray = new Uint8Array(value);
-                  await appendChunk(sourceBuffer, chunkArray);
-                }
-              }
-
-              const waitForUpdate = (): Promise<void> => {
-                return new Promise<void>((resolve) => {
-                  if (sourceBuffer.updating) {
-                    const handler = () => {
-                      sourceBuffer.removeEventListener('updateend', handler);
-                      resolve();
-                    };
-                    sourceBuffer.addEventListener('updateend', handler);
-                  } else {
-                    resolve();
-                  }
-                });
-              };
-
-              await waitForUpdate();
-              mediaSource.endOfStream();
-              
-              setUploadProgress(100);
-              setConversionComplete(true);
-              setIsUploading(false);
-              setText(`"${file.name}" converted to audio successfully. Streaming ready!`);
-            } catch (err) {
-              console.error("Stream processing error:", err);
-              setError("Failed to process audio stream");
-              setIsUploading(false);
-            }
-          };
-
-          processStream();
-        } catch (err) {
-          console.error("Source buffer error:", err);
-          setError("Failed to initialize audio stream");
-          setIsUploading(false);
-        }
-      });
-
-      mediaSource.addEventListener("error", (e) => {
-        console.error("MediaSource error:", e);
-        setError("Audio stream error occurred");
-        setIsUploading(false);
-      });
-
+      const data = await res.json();
+      
+      // Show confirmation popup
+      setShowConfirmationModal(true);
+      setShowEmailModal(false);
+      setIsProcessing(false);
+      setProcessingStatus("");
+      
+      // Clear the uploaded file
+      handleClearFile();
+      
     } catch (error) {
       console.error("Upload failed:", error);
       setError(error instanceof Error ? error.message : "Conversion failed");
-      setIsUploading(false);
-      setUploadProgress(0);
-      clearInterval(progressInterval);
+      setIsProcessing(false);
+      setProcessingStatus("");
     }
-  };
-
-  // Modified upload function to show modal
-  const handleUploadPdf = () => {
-    if (!file) return;
-    
-    setShowEmailModal(true);
-  };
-
-  // Safe Source Buffer Append Function with Buffer Management
-  const appendChunk = (sourceBuffer: SourceBuffer, chunk: Uint8Array): Promise<void> => {
-    return new Promise<void>((resolve, reject) => {
-      const BUFFER_SIZE_LIMIT = 30 * 1024 * 1024;
-      const MAX_BUFFER_DURATION = 120;
-      
-      try {
-        if (sourceBuffer.buffered.length > 0) {
-          const currentTime = audioRef.current?.currentTime || 0;
-          const bufferStart = sourceBuffer.buffered.start(0);
-          const bufferEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
-          
-          if (currentTime > 10 && bufferStart < currentTime - 10) {
-            try {
-              sourceBuffer.remove(bufferStart, currentTime - 10);
-            } catch (e) {
-              console.warn("Failed to remove old buffer:", e);
-            }
-          }
-          
-          if (bufferEnd - bufferStart > MAX_BUFFER_DURATION) {
-            const removeEnd = bufferStart + (bufferEnd - bufferStart - MAX_BUFFER_DURATION / 2);
-            try {
-              sourceBuffer.remove(bufferStart, Math.min(removeEnd, bufferEnd));
-            } catch (e) {
-              console.warn("Failed to trim buffer:", e);
-            }
-          }
-        }
-        
-        const onUpdateEnd = () => {
-          sourceBuffer.removeEventListener('updateend', onUpdateEnd);
-          resolve();
-        };
-
-        const onError = (err: Event) => {
-          sourceBuffer.removeEventListener('error', onError);
-          reject(err);
-        };
-
-        if (sourceBuffer.updating) {
-          sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-          sourceBuffer.addEventListener('error', onError, { once: true });
-        } else {
-          try {
-            const buffer = new ArrayBuffer(chunk.byteLength);
-            const view = new Uint8Array(buffer);
-            view.set(chunk);
-            
-            sourceBuffer.appendBuffer(buffer);
-            sourceBuffer.addEventListener('updateend', onUpdateEnd, { once: true });
-            sourceBuffer.addEventListener('error', onError, { once: true });
-          } catch (err) {
-            reject(err);
-          }
-        }
-      } catch (err) {
-        reject(err);
-      }
-    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
+      if (!selectedFile.name.toLowerCase().endsWith(".pdf")) {
+        setError("Only PDF files are supported");
+        return;
+      }
+      
+      if (selectedFile.size > 50 * 1024 * 1024) {
+        setError("File too large. Maximum size is 50MB");
+        return;
+      }
+      
       setFile(selectedFile);
       setConversionComplete(false);
       setAudioUrl(null);
       setText("");
       setError(null);
     }
+  };
+
+  // Modified upload function to show modal
+  const handleUploadPdf = () => {
+    if (!file) {
+      setError("Please select a PDF file first");
+      return;
+    }
+    
+    setShowEmailModal(true);
   };
 
   const handlePlayAudio = () => {
@@ -302,7 +158,7 @@ export default function Home() {
     setText("");
     setConversionComplete(false);
     setError(null);
-    setUploadProgress(0);
+    setEmail("");
   };
 
   const handleDownloadAudio = () => {
@@ -316,8 +172,8 @@ export default function Home() {
   const steps = [
     {
       number: "01",
-      title: "Upload Ebook",
-      description: "Upload PDF, EPUB, or MOBI file",
+      title: "Upload PDF",
+      description: "Upload your PDF file (max 50MB)",
       icon: <Upload className="h-5 w-5" />,
     },
     {
@@ -328,9 +184,9 @@ export default function Home() {
     },
     {
       number: "03",
-      title: "Listen Anywhere",
-      description: "Download and enjoy your audio",
-      icon: <Headphones className="h-5 w-5" />,
+      title: "Email Delivery",
+      description: "Receive audio file via email",
+      icon: <Mail className="h-5 w-5" />,
     },
   ];
 
@@ -338,9 +194,6 @@ export default function Home() {
     return () => {
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);
-      }
-      if (mediaSourceRef.current) {
-        mediaSourceRef.current = null;
       }
     };
   }, [audioUrl]);
@@ -399,11 +252,11 @@ export default function Home() {
                 <Mail className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent" />
               </div>
               <div>
-                <h2 className="text-2xl font-bold font-heading">Processing Your Audio</h2>
+                <h2 className="text-2xl font-bold font-heading">Process Your PDF</h2>
                 <p className={`text-sm mt-1 ${
                   darkMode ? "text-gray-400" : "text-gray-600"
                 }`}>
-                  We'll email you when it's ready
+                  We'll email you the audio file
                 </p>
               </div>
             </div>
@@ -413,13 +266,13 @@ export default function Home() {
                 darkMode ? "bg-blue-500/10 border border-blue-500/20" : "bg-blue-50/50 border border-blue-200"
               }`}>
                 <div className="flex items-start space-x-3">
-                  <AlertCircle className={`h-5 w-5 mt-0.5 ${darkMode ? "text-blue-400" : "text-blue-500"}`} />
+                  <Clock className={`h-5 w-5 mt-0.5 ${darkMode ? "text-blue-400" : "text-blue-500"}`} />
                   <div>
                     <p className={`text-sm font-medium ${darkMode ? "text-blue-300" : "text-blue-700"}`}>
-                      This may take a few minutes
+                      Processing takes 2-10 minutes
                     </p>
                     <p className={`text-xs mt-1 ${darkMode ? "text-blue-400/80" : "text-blue-600/80"}`}>
-                      Your PDF is being converted to audio. Enter your email and we'll send you the audio file when it's ready.
+                      Your PDF will be converted to audio and sent to your email when complete.
                     </p>
                   </div>
                 </div>
@@ -457,7 +310,7 @@ export default function Home() {
                 </div>
 
                 <div className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
-                  <p>We'll send the audio file to this email address once conversion is complete.</p>
+                  <p>We'll send the MP3 audio file to this email address once conversion is complete.</p>
                 </div>
               </div>
 
@@ -486,11 +339,11 @@ export default function Home() {
                   {isProcessing ? (
                     <span className="flex items-center justify-center">
                       <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                      Processing...
+                      {processingStatus || "Processing..."}
                     </span>
                   ) : (
                     <span className="relative z-10 flex items-center justify-center">
-                      <CheckCircle className="h-5 w-5 mr-2" />
+                      <Send className="h-5 w-5 mr-2" />
                       Start Conversion
                     </span>
                   )}
@@ -517,92 +370,71 @@ export default function Home() {
               ? "bg-linear-to-br from-white/5 to-white/2 border-white/10"
               : "bg-linear-to-br from-white/90 to-white/70 border-white/30"
           }`}>
-            <div className="text-center">
+            <div className="flex flex-col items-center text-center space-y-6">
               {/* Success Icon */}
-              <div className="relative inline-block mb-6">
-                <div className={`h-20 w-20 rounded-full flex items-center justify-center ${
-                  darkMode 
-                    ? "bg-linear-to-br from-green-500/20 to-emerald-500/20" 
-                    : "bg-linear-to-br from-green-50 to-emerald-50"
-                } animate-scale-up`}>
-                  <div className={`h-16 w-16 rounded-full flex items-center justify-center ${
-                    darkMode 
-                      ? "bg-linear-to-br from-green-500/30 to-emerald-500/30" 
-                      : "bg-linear-to-br from-green-100 to-emerald-100"
-                  }`}>
-                    <CheckCircle className="h-10 w-10 text-green-500 animate-bounce" />
-                  </div>
-                  <div className="absolute inset-0 rounded-full border-4 border-green-500/30 animate-ping-slow"></div>
-                </div>
+              <div className={`p-4 rounded-2xl ${
+                darkMode ? "bg-emerald-500/20 border border-emerald-500/30" : "bg-emerald-50 border border-emerald-200"
+              }`}>
+                <CheckCircle className="h-16 w-16 text-emerald-500 animate-scale-up" />
               </div>
 
-              <h2 className="text-2xl font-bold font-heading mb-3">
-                Processing Started
-              </h2>
-              
-              <p className={`text-lg mb-6 leading-relaxed ${
-                darkMode ? "text-gray-300" : "text-gray-600"
-              }`}>
-                Your audio file will be emailed to you shortly after processing
-              </p>
-
-              <div className={`p-4 rounded-xl mb-6 ${
-                darkMode ? "bg-blue-500/10 border border-blue-500/20" : "bg-blue-50/50 border border-blue-200"
-              }`}>
-                <div className="flex items-start space-x-3">
-                  <Mail className={`h-5 w-5 mt-0.5 ${darkMode ? "text-blue-400" : "text-blue-500"}`} />
-                  <div className="text-left">
-                    <p className={`text-sm font-medium ${darkMode ? "text-blue-300" : "text-blue-700"}`}>
-                      Check your inbox
-                    </p>
-                    <p className={`text-xs mt-1 ${darkMode ? "text-blue-400/80" : "text-blue-600/80"}`}>
-                      We'll send the audio file to: <span className="font-semibold">{email}</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className={`text-sm mb-8 ${
-                darkMode ? "text-gray-400" : "text-gray-600"
-              }`}>
-                <p className="mb-2">• Processing typically takes 2-5 minutes</p>
-                <p className="mb-2">• You can upload another file anytime</p>
-                <p>• Check spam folder if you don't see the email</p>
-              </div>
-
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => {
-                    setShowConfirmationModal(false);
-                    setEmail(""); // Clear email for next use
-                  }}
-                  className={`flex-1 py-3 rounded-xl font-medium transition-all duration-300 shadow-lg ${
-                    darkMode
-                      ? "bg-linear-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
-                      : "bg-linear-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
-                  } text-white hover:shadow-xl hover:-translate-y-0.5 relative overflow-hidden group`}
-                >
-                  <span className="relative z-10 flex items-center justify-center">
-                    <Upload className="h-5 w-5 mr-2" />
-                    Upload Another File
-                  </span>
-                  <div className="absolute inset-0 bg-linear-to-r from-emerald-500 to-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                </button>
+              {/* Content */}
+              <div className="space-y-4">
+                <h2 className="text-2xl font-bold font-heading">Processing Started!</h2>
                 
-                <button
-                  onClick={() => {
-                    setShowConfirmationModal(false);
-                    setEmail(""); // Clear email for next use
-                  }}
-                  className={`px-6 py-3 rounded-xl font-medium transition-all duration-300 ${
-                    darkMode
-                      ? "bg-white/10 hover:bg-white/20 border border-white/20"
-                      : "bg-gray-100 hover:bg-gray-200 border border-gray-200"
-                  }`}
-                >
-                  Close
-                </button>
+                <div className={`p-4 rounded-xl ${
+                  darkMode ? "bg-blue-500/10 border border-blue-500/20" : "bg-blue-50/50 border border-blue-200"
+                }`}>
+                  <div className="flex items-start space-x-3">
+                    <Mail className={`h-5 w-5 mt-0.5 shrink-0 ${darkMode ? "text-blue-400" : "text-blue-500"}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? "text-blue-300" : "text-blue-700"}`}>
+                        Your audio file will be emailed to you
+                      </p>
+                      <p className={`text-sm mt-1 ${darkMode ? "text-blue-400/80" : "text-blue-600/80"}`}>
+                        We'll send the converted audio file to <span className="font-semibold">{email}</span> once processing is complete.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`p-4 rounded-xl ${
+                  darkMode ? "bg-amber-500/10 border border-amber-500/20" : "bg-amber-50/50 border border-amber-200"
+                }`}>
+                  <div className="flex items-start space-x-3">
+                    <Clock className={`h-5 w-5 mt-0.5 shrink-0 ${darkMode ? "text-amber-400" : "text-amber-500"}`} />
+                    <div className="text-left">
+                      <p className={`text-sm font-medium ${darkMode ? "text-amber-300" : "text-amber-700"}`}>
+                        Processing Time
+                      </p>
+                      <p className={`text-sm mt-1 ${darkMode ? "text-amber-400/80" : "text-amber-600/80"}`}>
+                        This usually takes 2-10 minutes depending on PDF size. Larger files take longer.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
+                  <p>Processing typically takes 2-10 minutes depending on file size. You'll receive an email with the MP3 audio file attached when your audio is ready.</p>
+                </div>
               </div>
+
+              {/* Action Button */}
+              <button
+                onClick={() => setShowConfirmationModal(false)}
+                className={`w-full py-3 rounded-xl font-medium transition-all duration-300 shadow-lg ${
+                  darkMode
+                    ? "bg-emerald-500 hover:bg-emerald-600"
+                    : "bg-emerald-500 hover:bg-emerald-600"
+                } text-white hover:shadow-emerald-500/25 hover:shadow-xl hover:-translate-y-0.5`}
+              >
+                Got it, thank you!
+              </button>
+
+              {/* Note */}
+              <p className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>
+                Check your spam folder if you don't see the email within 15 minutes
+              </p>
             </div>
           </div>
         </div>
@@ -624,7 +456,7 @@ export default function Home() {
                 SonifyReads
               </span>
               <p className="text-xs mt-1 opacity-75 font-sans font-light tracking-wide">
-                REAL-TIME AUDIO STREAMING
+                PDF TO AUDIO CONVERTER
               </p>
             </div>
           </div>
@@ -659,20 +491,20 @@ export default function Home() {
             } shadow-lg animate-pulse`}>
               <Sparkles className="h-4 w-4 text-blue-500 animate-spin-slow" />
               <span className="font-medium bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent font-sans tracking-wide text-sm">
-                Real-Time Audio Streaming
+                PDF to Audio Conversion
               </span>
             </div>
 
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6 max-w-5xl mx-auto animate-slide-up leading-tight font-display">
               <span className="bg-linear-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                Stream Words
+                Convert PDFs
               </span>
               <br />
               <span className={darkMode ? "text-white" : "text-gray-900"}>
                 Into{" "}
                 <span className="relative inline-block">
                   <span className="relative z-10 bg-linear-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">
-                    Live Audio
+                    Audio Files
                   </span>
                   <div className="absolute -bottom-2 left-0 right-0 h-1 bg-linear-to-r from-blue-500 to-purple-500 rounded-full opacity-75"></div>
                 </span>
@@ -682,7 +514,7 @@ export default function Home() {
             <p className={`text-lg md:text-xl mb-10 max-w-3xl mx-auto animate-slide-up delay-100 leading-relaxed font-body ${
               darkMode ? "text-gray-300/90" : "text-gray-600/90"
             }`}>
-              Convert documents into streaming audio experiences. Listen as your content is processed in real-time with AI-powered narration.
+              Upload your PDF and receive a professionally narrated audio file via email. Perfect for listening on the go.
             </p>
 
             <div className="flex flex-wrap justify-center gap-4 mb-8">
@@ -690,8 +522,8 @@ export default function Home() {
                 darkMode ? "bg-white/5" : "bg-white/50"
               }`}>
                 <span className="text-sm font-medium flex items-center gap-2">
-                  <Waves className="h-4 w-4 text-blue-500" />
-                  Live Streaming
+                  <Mail className="h-4 w-4 text-blue-500" />
+                  Email Delivery
                 </span>
               </div>
               <div className={`px-4 py-2 rounded-full backdrop-blur-sm ${
@@ -699,15 +531,15 @@ export default function Home() {
               }`}>
                 <span className="text-sm font-medium flex items-center gap-2">
                   <Globe className="h-4 w-4 text-purple-500" />
-                  40+ Languages
+                  Natural Voices
                 </span>
               </div>
               <div className={`px-4 py-2 rounded-full backdrop-blur-sm ${
                 darkMode ? "bg-white/5" : "bg-white/50"
               }`}>
                 <span className="text-sm font-medium flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-yellow-500" />
-                  Real-time Processing
+                  <Shield className="h-4 w-4 text-green-500" />
+                  Secure Processing
                 </span>
               </div>
             </div>
@@ -729,11 +561,11 @@ export default function Home() {
                     <CloudUpload className="h-6 w-6 bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent" />
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold font-heading">Stream Your Document</h2>
+                    <h2 className="text-2xl font-bold font-heading">Convert Your PDF</h2>
                     <p className={`text-sm mt-1 ${
                       darkMode ? "text-gray-400" : "text-gray-600"
                     }`}>
-                      Upload and stream audio in real-time
+                      Upload PDF and receive audio via email
                     </p>
                   </div>
                 </div>
@@ -760,7 +592,7 @@ export default function Home() {
                             <p className={`text-sm mb-4 font-medium ${
                               darkMode ? "text-gray-400" : "text-gray-500"
                             }`}>
-                              {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to stream
+                              {(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to process
                             </p>
                             <button
                               onClick={(e) => {
@@ -784,19 +616,19 @@ export default function Home() {
                             <p className={`mb-2 text-lg text-center font-heading ${
                               darkMode ? "text-gray-100" : "text-gray-700"
                             }`}>
-                              <span className="font-bold">Drop your file here</span>
+                              <span className="font-bold">Drop your PDF here</span>
                             </p>
                             <p className={`text-sm text-center max-w-xs ${
                               darkMode ? "text-gray-400" : "text-gray-500"
                             }`}>
-                              Supports PDF, EPUB, DOCX up to 50MB
+                              Supports PDF files up to 50MB
                             </p>
                             <div className={`mt-4 px-4 py-2 rounded-lg text-sm font-medium ${
                               darkMode ? "bg-white/10" : "bg-blue-500/10"
                             }`}>
                               <span className="flex items-center gap-2">
                                 <Shield className="h-3 w-3" />
-                                Secure & private streaming
+                                Secure & private processing
                               </span>
                             </div>
                           </>
@@ -804,7 +636,7 @@ export default function Home() {
                       </div>
                       <input
                         type="file"
-                        accept=".pdf,.epub,.docx,application/pdf"
+                        accept=".pdf,application/pdf"
                         className="hidden"
                         onChange={handleFileChange}
                       />
@@ -826,34 +658,6 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-4">
-                  {isUploading && (
-                    <div className={`p-4 rounded-xl ${
-                      darkMode ? "bg-white/5" : "bg-blue-50/50"
-                    }`}>
-                      <div className="flex justify-between text-sm mb-2 font-medium">
-                        <span className={darkMode ? "text-gray-300" : "text-gray-700"}>
-                          {uploadProgress >= 95 ? "Finalizing stream..." : "Streaming audio..."}
-                        </span>
-                        <span className="font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent">
-                          {uploadProgress.toFixed(0)}%
-                        </span>
-                      </div>
-                      <div className={`w-full rounded-full h-2.5 overflow-hidden ${
-                        darkMode ? "bg-white/10" : "bg-gray-100"
-                      }`}>
-                        <div
-                          className="bg-linear-to-r from-blue-500 via-purple-500 to-pink-500 h-2.5 rounded-full transition-all duration-300"
-                          style={{ width: `${uploadProgress}%` }}
-                        ></div>
-                      </div>
-                      {uploadProgress >= 95 && (
-                        <p className="text-xs mt-2 text-center text-blue-500">
-                          Audio streaming will begin shortly...
-                        </p>
-                      )}
-                    </div>
-                  )}
-
                   <button
                     onClick={handleUploadPdf}
                     disabled={!file || isUploading}
@@ -868,59 +672,20 @@ export default function Home() {
                       {isUploading ? (
                         <>
                           <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3"></div>
-                          Streaming...
-                        </>
-                      ) : conversionComplete ? (
-                        <>
-                          <CheckCircle className="h-6 w-6 mr-3" />
-                          Stream Complete!
+                          Uploading...
                         </>
                       ) : (
                         <>
                           <Headphones className="h-6 w-6 mr-3 group-hover:scale-110 transition-transform" />
-                          Stream Audio
+                          Convert to Audio
                         </>
                       )}
                     </span>
                   </button>
-
-                  {conversionComplete && audioUrl && (
-                    <div className="grid grid-cols-2 gap-3 animate-fade-in">
-                      <button
-                        onClick={handlePlayAudio}
-                        className="py-3 bg-linear-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium transition-all duration-300 hover:shadow-green-500/25 hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center group relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-linear-to-r from-emerald-500 to-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                        <span className="relative z-10 flex items-center">
-                          {isPlaying ? (
-                            <>
-                              <Pause className="h-5 w-5 mr-2" />
-                              Pause Audio
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-5 w-5 mr-2" />
-                              Play Stream
-                            </>
-                          )}
-                        </span>
-                      </button>
-                      <button
-                        onClick={handleDownloadAudio}
-                        className="py-3 bg-linear-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium transition-all duration-300 hover:shadow-purple-500/25 hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center group relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-linear-to-r from-pink-500 to-purple-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                        <span className="relative z-10 flex items-center">
-                          <Download className="h-5 w-5 mr-2" />
-                          Download
-                        </span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* Right Column - Audio Player & Steps */}
+              {/* Right Column - Steps & Features */}
               <div className="space-y-6">
                 {/* Steps */}
                 <div className={`rounded-3xl p-6 backdrop-blur-lg shadow-xl border ${
@@ -929,7 +694,7 @@ export default function Home() {
                     : "bg-linear-to-br from-white/80 to-white/60 border-white/20"
                 }`}>
                   <h3 className="text-2xl font-bold mb-8 font-heading">
-                    How Streaming Works
+                    How It Works
                     <div className="h-1 w-16 bg-linear-to-r from-blue-500 to-purple-500 rounded-full mt-2"></div>
                   </h3>
                   <div className="space-y-6">
@@ -978,31 +743,31 @@ export default function Home() {
                     ? "bg-linear-to-br from-white/5 to-white/2 border-white/10"
                     : "bg-linear-to-br from-white/80 to-white/60 border-white/20"
                 }`}>
-                  <h3 className="text-xl font-bold mb-4 font-heading">Streaming Features</h3>
+                  <h3 className="text-xl font-bold mb-4 font-heading">Key Features</h3>
                   <div className="grid grid-cols-2 gap-3">
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        Live
+                        MP3
                       </div>
-                      <div className="text-xs font-medium">Streaming</div>
+                      <div className="text-xs font-medium">Format</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        50+
+                        50MB
                       </div>
-                      <div className="text-xs font-medium">Voices</div>
+                      <div className="text-xs font-medium">Max Size</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
                     }`}>
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
-                        <Waves className="inline h-5 w-5" />
+                        <Mail className="inline h-5 w-5" />
                       </div>
-                      <div className="text-xs font-medium">Real-time</div>
+                      <div className="text-xs font-medium">Email Delivery</div>
                     </div>
                     <div className={`p-3 rounded-lg text-center transition-all duration-300 hover:scale-105 ${
                       darkMode ? "bg-white/5" : "bg-white/50"
@@ -1010,7 +775,7 @@ export default function Home() {
                       <div className="text-2xl font-bold bg-linear-to-r from-blue-500 to-purple-500 bg-clip-text text-transparent mb-1 font-display">
                         24/7
                       </div>
-                      <div className="text-xs font-medium">Support</div>
+                      <div className="text-xs font-medium">Processing</div>
                     </div>
                   </div>
                 </div>
@@ -1043,7 +808,7 @@ export default function Home() {
                     <p className={`text-xs mt-1 font-light tracking-wider ${
                       darkMode ? "text-gray-400" : "text-gray-500"
                     }`}>
-                      Real-time audio streaming
+                      PDF to Audio Converter
                     </p>
                   </div>
                 </div>
@@ -1098,17 +863,6 @@ export default function Home() {
             transform: scale(1);
           }
         }
-
-        @keyframes ping-slow {
-          0% {
-            transform: scale(1);
-            opacity: 1;
-          }
-          100% {
-            transform: scale(1.5);
-            opacity: 0;
-          }
-        }
         
         .animate-fade-in {
           animation: fade-in 0.8s ease-out;
@@ -1128,11 +882,7 @@ export default function Home() {
         }
 
         .animate-scale-up {
-          animation: scale-up 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-        }
-
-        .animate-ping-slow {
-          animation: ping-slow 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+          animation: scale-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
         }
       `}</style>
     </div>
