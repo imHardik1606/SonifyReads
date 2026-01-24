@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,6 +12,16 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#1a1a1a" },
+  ],
+};
+
 export const metadata: Metadata = {
   title: "SonifyReads",
   description: "Convert your PDF documents into high-quality audio files. Upload, process, and receive audio via email in minutes.",
@@ -20,11 +30,11 @@ export const metadata: Metadata = {
   openGraph: {
     title: "SonifyReads - Listen to Your Documents",
     description: "Transform reading into listening. Convert any PDF into natural-sounding audio.",
-    url: "https://sonifyreads.com",
+    url: "https://sonifyreads.vercel.app",
     siteName: "SonifyReads",
     images: [
       {
-        url: "https://sonifyreads.com/og-image.jpg",
+        url: "https://sonifyreads.vercel.app/favicon.ico",
         width: 1200,
         height: 630,
       },
@@ -37,7 +47,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "SonifyReads - PDF to Audio",
     description: "Your documents, in audio form.",
-    images: ["https://sonifyreads.com/twitter-card.jpg"],
+    images: ["https://sonifyreads.vercel.app/favicon.ico"],
   },
   
   icons: {
@@ -52,24 +62,13 @@ export const metadata: Metadata = {
     other: [
       {
         rel: "mask-icon",
-        url: "/safari-pinned-tab.svg",
+        url: "/favicon.ico",
         color: "#5bbad5",
       },
     ],
   },
   
-  manifest: "/site.webmanifest",
-  
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#1a1a1a" },
-  ],
-  
-  viewport: {
-    width: "device-width",
-    initialScale: 1,
-    maximumScale: 1,
-  },
+  manifest: "/site.webmanifest"
 };
 
 export default function RootLayout({
