@@ -26,7 +26,7 @@ SonifyReads is an innovative AI-powered platform that transforms your PDF docume
 
 ### 📧 **Convenient Delivery**
 - **Email Integration**: Receive audio files directly in your inbox
-- **Dual Email Backends**: Resilient delivery with Resend API + SMTP fallback
+- **Dual Email Backends**: Resilient delivery with Gmail SMTP
 - **Beautiful Templates**: Professional HTML email with file attachment
 
 ### 🛡️ **Enterprise-Grade Reliability**
@@ -40,7 +40,7 @@ SonifyReads is an innovative AI-powered platform that transforms your PDF docume
 - Python 3.9+
 - Node.js 16+
 - Edge TTS dependencies
-- Resend API key (recommended) or SMTP credentials
+- Gmail SMTP
 
 ### **Backend Setup**
 
@@ -89,6 +89,8 @@ npm run dev
 yarn dev
 ```
 
+```I prefer yarn```
+
 I'll add a "Future Features" section and enhance the current features with a roadmap for multiple voice options. Here's the updated README section:
 
 ## 🚀 **Future Features Roadmap**
@@ -134,11 +136,9 @@ graph TB
     D --> E[PDF Processing]
     E --> F[Edge TTS Conversion]
     F --> G[Email Service]
-    G --> H{Resend API?}
-    H -->|Yes| I[Resend Delivery]
-    H -->|No| J[SMTP Fallback]
-    I --> K[User Inbox]
-    J --> K
+    G --> H{Gmail SMTP}
+    H --> I[User Inbox]
+    I --> J
 ```
 
 ### **Tech Stack**
@@ -148,7 +148,7 @@ graph TB
 | **Frontend** | React + TypeScript | Modern, type-safe UI |
 | **Backend** | FastAPI | High-performance API |
 | **TTS Engine** | Edge TTS | Natural speech synthesis |
-| **Email** | Resend API | Reliable delivery |
+| **Email** | Gmail SMTP | Reliable delivery |
 | **PDF Processing** | PyMuPDF | Text extraction |
 | **Styling** | Tailwind CSS | Responsive design |
 
@@ -160,7 +160,7 @@ graph TB
 | **Processing Time** | ~1 min/10 pages | Varies by content |
 | **TTS Concurrency** | 2 | Render-safe limit |
 | **Characters per Chunk** | 3500 | Optimal for TTS |
-| **Email Retry** | Dual backend | Resend + SMTP | -->
+| **Email Retry** | Dual backend | Gmail SMTP | -->
 
 ## 🤝 **Contributing**
 
@@ -194,7 +194,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **[Microsoft Edge TTS](https://github.com/rany2/edge-tts)** for the amazing text-to-speech engine
 - **[FastAPI](https://fastapi.tiangolo.com/)** for the incredible web framework
-- **[Resend](https://resend.com/)** for reliable email delivery
+- **[Gmail](https://gmail.com/)** for reliable email delivery
 - **[Tailwind CSS](https://tailwindcss.com/)** for the beautiful styling system
 - **[React](https://reactjs.org/)** for the powerful frontend library
 
@@ -215,7 +215,7 @@ If you find this project useful, please give it a star! ⭐
   <h3>Made with ❤️ for readers everywhere</h3>
   <p>Because every story deserves to be heard</p>
   
-  [![Star History Chart](https://api.star-history.com/svg?repos=yourusername/sonifyreads&type=Date)](https://star-history.com/#yourusername/sonifyreads&Date)
+  [![Star History Chart](https://api.star-history.com/svg?repos=imHardik1606/sonifyreads&type=Date)](https://star-history.com/#yourusername/sonifyreads&Date)
 </div>
 
 ---
