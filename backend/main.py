@@ -1,20 +1,28 @@
-import re
 import os
+import re
 import fitz
-import edge_tts
 import asyncio
 import tempfile
 import shutil
+import threading
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 from pydantic import BaseModel
-import httpx
+from dotenv import load_dotenv
 
-# ------------------ setup ------------------
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
+import edge_tts
+
+# ---------------- setup ----------------
 
 load_dotenv()
 
@@ -29,30 +37,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ------------------ email config ------------------
-
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev")
-RESEND_API_URL = "https://api.resend.com/emails"
-
-# ------------------ TTS config (Render-safe) ------------------
+# ---------------- config ----------------
 
 VOICE = "en-US-GuyNeural"
 MAX_CHARS = 3500
-
-# IMPORTANT: reduced concurrency for Render
 TTS_CONCURRENCY = 2
 tts_semaphore = asyncio.Semaphore(TTS_CONCURRENCY)
 
-# ------------------ models ------------------
+# ---------------- models ----------------
 
 class EmailResponse(BaseModel):
     message: str
-    email: str
-    filename: str
     status: str
+    filename: str
 
-# ------------------ helpers ------------------
+# ---------------- helpers ----------------
 
 def clean_page_text(text: str) -> str:
     lines = []
@@ -67,187 +66,117 @@ def clean_page_text(text: str) -> str:
         lines.append(line)
     return " ".join(lines)
 
-def is_front_matter(text: str) -> bool:
-    keywords = [
-        "copyright", "all rights reserved", "isbn",
-        "library of congress", "table of contents",
-        "acknowledgements", "acknowledgments",
-        "dedication", "index"
-    ]
-    text = text.lower()
-    return any(k in text for k in keywords)
-
-def chunk_text(text: str, max_chars: int = MAX_CHARS):
-    chunks = []
-    buffer = ""
-
+def chunk_text(text: str):
+    buffer, chunks = "", []
     for sentence in text.split(". "):
-        if len(buffer) + len(sentence) > max_chars:
+        if len(buffer) + len(sentence) > MAX_CHARS:
             chunks.append(buffer.strip())
             buffer = sentence
         else:
             buffer += sentence + ". "
-
     if buffer:
         chunks.append(buffer.strip())
-
     return chunks
 
-# ------------------ TTS ------------------
+# ---------------- TTS ----------------
 
 async def tts_chunk(text: str) -> bytes:
     async with tts_semaphore:
         communicate = edge_tts.Communicate(text=text, voice=VOICE)
         audio = bytearray()
-
         async for msg in communicate.stream():
             if msg["type"] == "audio":
                 audio.extend(msg["data"])
-
         return bytes(audio)
 
-async def convert_pdf_to_audio(pdf_bytes: bytes, filename: str) -> str:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-    # Render-safe temp directory
+async def convert_pdf_to_audio(pdf_path: str, filename: str) -> str:
+    doc = fitz.open(pdf_path)
     temp_dir = tempfile.mkdtemp()
     audio_path = os.path.join(temp_dir, f"{Path(filename).stem}.mp3")
 
-    content_started = False
-    is_small_pdf = len(doc) <= 2
-
-    with open(audio_path, "wb") as final_audio:
-        for i, page in enumerate(doc):
-            raw_text = page.get_text("text")
-            if not raw_text:
+    with open(audio_path, "wb") as out:
+        for page in doc:
+            text = clean_page_text(page.get_text("text") or "")
+            if not text:
                 continue
-
-            cleaned = clean_page_text(raw_text)
-            if not cleaned:
-                continue
-
-            if not is_small_pdf and not content_started:
-                if i < 10 and is_front_matter(cleaned):
-                    continue
-                if re.search(r"(chapter\s+\d+|introduction|foreword)", cleaned.lower()):
-                    content_started = True
-                else:
-                    continue
-
-            # IMPORTANT: sequential chunk processing (Render-safe)
-            for chunk in chunk_text(cleaned):
-                audio_bytes = await tts_chunk(chunk)
-                final_audio.write(audio_bytes)
-                final_audio.flush()
+            for chunk in chunk_text(text):
+                audio = await tts_chunk(chunk)
+                out.write(audio)
 
     doc.close()
     return audio_path
 
-# ------------------ email services ------------------
-
-async def send_email_via_resend(
-    to_email: str,
-    subject: str,
-    html_content: str,
-    attachment_path: str,
-    attachment_filename: str
-) -> bool:
-    if not RESEND_API_KEY:
-        return False
-
+# ---------------- email ----------------
+# Send email with audio attachment using Gmail SMTP
+async def send_email(to_email, subject, html, attachment_path, attachment_name):
     try:
-        import base64
+        # GMAIL SMTP CONFIG
+        SMTP_HOST = "smtp.gmail.com"
+        SMTP_PORT = 587
 
-        with open(attachment_path, "rb") as f:
-            attachment_base64 = base64.b64encode(f.read()).decode()
+        GMAIL_USER = os.getenv("MAIL_USERNAME")
+        GMAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
 
-        payload = {
-            "from": RESEND_FROM_EMAIL,
-            "to": [to_email],
-            "subject": subject,
-            "html": html_content,
-            "attachments": [{
-                "filename": attachment_filename,
-                "content": attachment_base64,
-                "content_type": "audio/mpeg"
-            }]
-        }
+        print(f"📧 Preparing email to: {to_email}")
+        print(f"📎 Attachment: {attachment_name}")
 
-        headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            res = await client.post(RESEND_API_URL, json=payload, headers=headers)
-
-        return res.status_code == 200
-
-    except Exception as e:
-        print("Resend error:", e)
-        return False
-
-async def send_email_via_smtp(
-    to_email: str,
-    subject: str,
-    body: str,
-    attachment_path: str,
-    attachment_filename: str
-) -> bool:
-    import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
-    from email.mime.base import MIMEBase
-    from email import encoders
-
-    try:
-        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", 587))
-        smtp_username = os.getenv("SMTP_USERNAME")
-        smtp_password = os.getenv("SMTP_PASSWORD")
-
-        if not smtp_username or not smtp_password:
-            return False
-
+        # CREATE EMAIL
         msg = MIMEMultipart()
-        msg["From"] = smtp_username
+
+        # IMPORTANT: From MUST be your Gmail address
+        msg["From"] = f"SonifyReads <{GMAIL_USER}>"
         msg["To"] = to_email
         msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
 
-        with open(attachment_path, "rb") as f:
+        # Add HTML body
+        msg.attach(MIMEText(html, "html"))
+
+        # ADD AUDIO ATTACHMENT
+        print(f"📂 Reading attachment: {attachment_path}")
+        with open(attachment_path, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read())
+            part.set_payload(attachment.read())
             encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="{attachment_filename}"')
+
+            part.add_header(
+                "Content-Disposition",
+                f'attachment; filename="{attachment_name}"'
+            )
+            part.add_header(
+                "Content-Type",
+                f'audio/mpeg; name="{attachment_name}"'
+            )
+
             msg.attach(part)
 
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
-            server.login(smtp_username, smtp_password)
+        # SEND VIA GMAIL SMTP
+        print("🚀 Connecting to Gmail SMTP...")
+
+        context = ssl.create_default_context()
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls(context=context)
+
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
             server.send_message(msg)
 
+        print(f"✅ Email successfully sent to: {to_email}")
         return True
 
     except Exception as e:
-        print("SMTP error:", e)
+        print(f"❌ Failed to send email: {str(e)}")
         return False
 
-# ------------------ background task ------------------
 
-# async def process_and_email_pdf(pdf_bytes: bytes, email: str, filename: str):
-async def process_and_email_pdf(pdf_bytes: bytes, email: str, filename: str):
-    """Background task to process PDF and send email."""
-    temp_dir = None
+async def async_worker(pdf_path, email, filename):
+    audio_path = None
     try:
-        # Convert PDF to audio
         print(f"Starting PDF conversion for: {filename}")
-        audio_path = await convert_pdf_to_audio(pdf_bytes, filename)
-        temp_dir = os.path.dirname(audio_path)
-
-        # Prepare email content
+        audio_path = await convert_pdf_to_audio(pdf_path, filename)
+        
+        # Prepare email content with your original HTML
         audio_filename = os.path.basename(audio_path)
-        subject = f"Your Audio File: {Path(filename).stem}"
+        subject = f"Your Audio File: {Path(filename).stem}.mp3"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -323,92 +252,57 @@ async def process_and_email_pdf(pdf_bytes: bytes, email: str, filename: str):
         </body>
         </html>
         """
-
-        # Try Resend first, fallback to SMTP
-        email_sent = False
         
-        if RESEND_API_KEY:
-            print("Sending email via Resend...")
-            email_sent = await send_email_via_resend(
-                email, subject, html_content, audio_path, audio_filename
-            )
+        print("Sending email via GMail SMTP...")
+        success = await send_email(email, subject, html_content, audio_path, audio_filename)
         
-        if not email_sent:
-            print("Trying SMTP fallback...")
-            # Simple text version for SMTP
-            text_content = f"""
-            Hello,
-            
-            Your PDF "{filename}" has been successfully converted to audio.
-            The audio file "{audio_filename}" is attached to this email.
-            You can download and listen to it on any device that supports MP3 files.
-            
-            Voice: Natural English (US)
-            Format: MP3
-            
-            Thank you for using SonifyReads!
-            
-            Best regards,
-            The SonifyReads Team
-            """
-            
-            email_sent = await send_email_via_smtp(
-                email, subject, text_content, audio_path, audio_filename
-            )
-
-        if email_sent:
+        if success:
             print(f"Successfully processed and emailed audio for {filename} to {email}")
         else:
             print(f"Failed to send email for {filename}")
-            # You might want to log this failure for manual follow-up
             
     except Exception as e:
         print(f"Error in background processing: {str(e)}")
-        # Log the error for debugging
         import traceback
         traceback.print_exc()
-        
     finally:
-        # Clean up temporary directory
-        if temp_dir and os.path.exists(temp_dir):
+        # Clean up temporary files
+        if audio_path and os.path.exists(os.path.dirname(audio_path)):
             try:
-                shutil.rmtree(temp_dir)
-                print(f"Cleaned up temp directory: {temp_dir}")
-            except:
-                pass
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+                shutil.rmtree(os.path.dirname(audio_path))
+                print(f"Cleaned up temp audio directory: {os.path.dirname(audio_path)}")
+            except Exception as e:
+                print(f"Error cleaning audio directory: {e}")
+        
+        if os.path.exists(pdf_path):
+            try:
+                os.remove(pdf_path)
+                print(f"Cleaned up temp PDF file: {pdf_path}")
+            except Exception as e:
+                print(f"Error cleaning PDF file: {e}")
 
-# ------------------ endpoints ------------------
+def threaded_worker(pdf_path, email, filename):
+    asyncio.run(async_worker(pdf_path, email, filename))
 
-@app.get("/")
-def health_check():
-    return {"status": "ok"}
+# ---------------- endpoint ----------------
 
-@app.post("/convert-pdf-to-audio/")
-async def convert_pdf_to_audio_email(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    email: str = Form(...)
-):
+@app.post("/convert-pdf-to-audio/", response_model=EmailResponse)
+async def upload_pdf(file: UploadFile = File(...), email: str = Form(...)):
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files supported")
+        raise HTTPException(400, "Only PDF files allowed")
 
-    pdf_bytes = await file.read()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        shutil.copyfileobj(file.file, tmp)
+        pdf_path = tmp.name
 
-    if len(pdf_bytes) > 50 * 1024 * 1024:
-        raise HTTPException(400, "File too large")
-
-    background_tasks.add_task(
-        process_and_email_pdf,
-        pdf_bytes,
-        email,
-        file.filename
-    )
+    threading.Thread(
+        target=threaded_worker,
+        args=(pdf_path, email, file.filename),
+        daemon=True
+    ).start()
 
     return EmailResponse(
-        message="Processing started. You will receive an email shortly.",
-        email=email,
-        filename=file.filename,
-        status="processing"
+        message="Upload complete. Processing started.",
+        status="queued",
+        filename=file.filename
     )

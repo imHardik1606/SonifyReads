@@ -4,351 +4,292 @@ import { useState, useEffect, useRef } from "react";
 import {
   Upload,
   Headphones,
-  BookOpen,
-  Play,
-  Pause,
   CheckCircle,
   Sparkles,
-  Volume2,
   Shield,
-  CloudUpload,
-  Download,
   X,
   Moon,
   Sun,
   FileAudio,
   Waves,
-  Zap,
-  BookText,
   Music,
   Globe,
   Mail,
   Loader2,
-  AlertCircle,
   Send,
   Clock,
 } from "lucide-react";
+import { uploadPdf } from "./lib/uploadPdf";
 
 export default function Home() {
+  // State for file management
   const [file, setFile] = useState<File | null>(null);
-  const [text, setText] = useState("");
-  const [isUploading, setIsUploading] = useState(false);
-  const [conversionComplete, setConversionComplete] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // State for UI preferences
   const [darkMode, setDarkMode] = useState(false);
+
+  // State for modal management
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
+
+  // State for upload process
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState<string>("");
-  const audioRef = useRef<HTMLAudioElement>(null);
+
+  // Ref for tracking upload start time
   const uploadStartTime = useRef<number>(0);
 
-  // Email validation function
-  const validateEmail = (email: string) => {
+  /**
+   * Validates email format - blocks temporary emails and only allows common providers
+   */
+  const validateEmail = (
+    email: string,
+  ): { isValid: boolean; error?: string } => {
+    // Basic email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  // Calculate estimated time remaining
-  const calculateEstimatedTime = (progress: number) => {
-    if (progress === 0 || !uploadStartTime.current) return "";
-
-    const elapsedTime = (Date.now() - uploadStartTime.current) / 1000; // in seconds
-    const estimatedTotalTime = elapsedTime / (progress / 100);
-    const remainingTime = estimatedTotalTime - elapsedTime;
-
-    if (remainingTime < 60) {
-      return `${Math.ceil(remainingTime)} seconds`;
-    } else {
-      return `${Math.ceil(remainingTime / 60)} minutes`;
+    if (!emailRegex.test(email)) {
+      return { isValid: false, error: "Please enter a valid email address" };
     }
+
+    const domain = email.split("@")[1].toLowerCase();
+
+    // List of allowed common email domains
+    const allowedDomains = [
+      // Major personal email providers
+      "gmail.com",
+      "googlemail.com",
+      "outlook.com",
+      "hotmail.com",
+      "live.com",
+      "msn.com",
+      "yahoo.com",
+      "ymail.com",
+      "icloud.com",
+      "me.com",
+      "mac.com",
+      "aol.com",
+      "protonmail.com",
+      "proton.me",
+      "zoho.com",
+      "yandex.com",
+      "mail.com",
+      "gmx.com",
+      "gmx.us",
+      "gmx.de",
+      "fastmail.com",
+      "tutanota.com",
+      "tuta.io",
+
+      // Country-specific common providers
+      "web.de",
+      "gmx.de",
+      "gmx.at",
+      "gmx.ch",
+      "libero.it",
+      "alice.it",
+      "tin.it",
+      "orange.fr",
+      "sfr.fr",
+      "free.fr",
+      "laposte.net",
+      "wanadoo.fr",
+      "mail.ru",
+      "bk.ru",
+      "list.ru",
+      "inbox.ru",
+      "rambler.ru",
+      "qq.com",
+      "163.com",
+      "126.com",
+      "sina.com",
+      "sohu.com",
+      "naver.com",
+      "daum.net",
+      "nate.com",
+      "hanmail.net",
+    ];
+
+    // Check for allowed domains
+    let isAllowed = false;
+    for (const allowedDomain of allowedDomains) {
+      if (domain === allowedDomain) {
+        isAllowed = true;
+        break;
+      }
+    }
+
+    // Also allow educational domains (.edu, .ac.uk, etc.)
+    if (!isAllowed) {
+      const eduPatterns = [
+        /\.edu$/i,
+        /\.ac\.[a-z]{2}$/i, // .ac.uk, .ac.jp, etc.
+        /\.edu\.[a-z]{2}$/i, // .edu.au, .edu.in, etc.
+      ];
+
+      for (const pattern of eduPatterns) {
+        if (pattern.test(domain)) {
+          isAllowed = true;
+          break;
+        }
+      }
+    }
+
+    // Also allow common business domains with .com, .org, .net
+    if (!isAllowed) {
+      const businessTlds = [".com", ".org", ".net", ".io", ".co"];
+      for (const tld of businessTlds) {
+        if (domain.endsWith(tld)) {
+          // Only allow if domain looks legitimate (not too short, not just numbers)
+          const domainName = domain.split(".")[0];
+          if (domainName.length >= 3 && !/^\d+$/.test(domainName)) {
+            isAllowed = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!isAllowed) {
+      return {
+        isValid: false,
+        error:
+          "Please use a common email provider (Gmail, Outlook, Yahoo, etc.) or your work/educational email.",
+      };
+    }
+
+    return { isValid: true };
   };
 
-  // Handle email submission with progress tracking
+  /**
+   * Handles PDF file upload and conversion process
+   */
   const handleEmailSubmit = async () => {
     setEmailError("");
 
+    // Input validation
     if (!email.trim()) {
       setEmailError("Email is required");
       return;
     }
 
-    if (!validateEmail(email)) {
-      setEmailError("Please enter a valid email address");
-      return;
-    }
-
-    if (!file) {
-      setEmailError("Please upload a file first");
-      return;
-    }
-
-    setIsProcessing(true);
-    setProcessingStatus("Preparing upload...");
-    setUploadProgress(0);
-    setEstimatedTime("");
-    uploadStartTime.current = Date.now();
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("email", email);
-
-    try {
-      // Create abort controller for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
-
-      setProcessingStatus("Uploading PDF...");
-
-      // Use XMLHttpRequest for better progress tracking
-      const xhr = new XMLHttpRequest();
-
-      return new Promise<void>((resolve, reject) => {
-        xhr.upload.addEventListener("progress", (event) => {
-          if (event.lengthComputable) {
-            const percentComplete = (event.loaded / event.total) * 100;
-            setUploadProgress(Math.round(percentComplete));
-            setEstimatedTime(calculateEstimatedTime(percentComplete));
-          }
-        });
-
-        xhr.upload.addEventListener("load", () => {
-          setProcessingStatus("Processing PDF...");
-        });
-
-        xhr.onreadystatechange = () => {
-          if (xhr.readyState === 4) {
-            clearTimeout(timeoutId);
-
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                const data = JSON.parse(xhr.responseText);
-
-                // Show confirmation popup
-                setShowConfirmationModal(true);
-                setShowEmailModal(false);
-                setIsProcessing(false);
-                setProcessingStatus("");
-                setUploadProgress(0);
-                setEstimatedTime("");
-
-                // Clear the uploaded file
-                handleClearFile();
-
-                resolve();
-              } catch (error) {
-                console.error("Response parsing failed:", error);
-                setError("Failed to parse server response");
-                setIsProcessing(false);
-                setProcessingStatus("");
-                setUploadProgress(0);
-                reject(error);
-              }
-            } else {
-              console.error("Upload failed:", xhr.status, xhr.statusText);
-              setError(`Upload failed: ${xhr.status} ${xhr.statusText}`);
-              setIsProcessing(false);
-              setProcessingStatus("");
-              setUploadProgress(0);
-              reject(new Error(`Upload failed: ${xhr.status}`));
-            }
-          }
-        };
-
-        xhr.onerror = () => {
-          clearTimeout(timeoutId);
-          console.error("Network error during upload");
-          setError("Network error. Please check your connection.");
-          setIsProcessing(false);
-          setProcessingStatus("");
-          setUploadProgress(0);
-          reject(new Error("Network error"));
-        };
-
-        xhr.ontimeout = () => {
-          console.error("Upload timeout");
-          setError("Upload timed out. Please try again.");
-          setIsProcessing(false);
-          setProcessingStatus("");
-          setUploadProgress(0);
-          reject(new Error("Upload timeout"));
-        };
-
-        // Set timeout for the request
-        xhr.timeout = 300000; // 5 minutes
-
-        xhr.open(
-          "POST",
-          `${process.env.NEXT_PUBLIC_API_URL}/convert-pdf-to-audio/`,
-        );
-        xhr.send(formData);
-      });
-    } catch (error) {
-      console.error("Upload failed:", error);
-
-      if (error instanceof Error && error.name === "AbortError") {
-        setError("Upload was cancelled or timed out");
-      } else {
-        setError(error instanceof Error ? error.message : "Conversion failed");
-      }
-
-      setIsProcessing(false);
-      setProcessingStatus("");
-      setUploadProgress(0);
-      setEstimatedTime("");
-    }
-  };
-
-  // Alternative fetch-based upload (if you prefer fetch API)
-  const handleEmailSubmitWithFetch = async () => {
-    setEmailError("");
-
-    if (!email.trim()) {
-      setEmailError("Email is required");
-      return;
-    }
-
-    if (!validateEmail(email)) {
-      setEmailError("Please enter a valid email address");
-      return;
-    }
-
-    if (!file) {
-      setEmailError("Please upload a file first");
-      return;
-    }
-
-    setIsProcessing(true);
-    setProcessingStatus("Preparing upload...");
-    setUploadProgress(0);
-    setEstimatedTime("");
-    uploadStartTime.current = Date.now();
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("email", email);
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
-
-      setProcessingStatus("Uploading PDF...");
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/convert-pdf-to-audio/`,
-        {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        },
+    // Use the validateEmail function properly
+    const validationResult = validateEmail(email);
+    if (!validationResult.isValid) {
+      setEmailError(
+        validationResult.error || "Please enter a valid email address",
       );
-
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
-      }
-
-      const data = await res.json();
-
-      // Show confirmation popup
-      setShowConfirmationModal(true);
-      setShowEmailModal(false);
-      setIsProcessing(false);
-      setProcessingStatus("");
-      setUploadProgress(0);
-      setEstimatedTime("");
-
-      // Clear the uploaded file
-      handleClearFile();
-    } catch (error) {
-      console.error("Upload failed:", error);
-
-      // Check if it's a timeout error
-      if (error instanceof DOMException && error.name === "AbortError") {
-        setError(
-          "Upload timed out. Please try again with a smaller file or check your connection.",
-        );
-      } else {
-        setError(error instanceof Error ? error.message : "Conversion failed");
-      }
-
-      setIsProcessing(false);
-      setProcessingStatus("");
-      setUploadProgress(0);
-      setEstimatedTime("");
+      return;
     }
+
+    if (!file) {
+      setEmailError("Please upload a file first");
+      return;
+    }
+
+    // Initialize upload state
+    setIsProcessing(true);
+    setProcessingStatus("Uploading PDF...");
+    setUploadProgress(0);
+    setEstimatedTime("");
+    uploadStartTime.current = Date.now();
+
+    // Execute upload using custom upload function
+    uploadPdf(
+      file,
+      email,
+      // Progress callback
+      (progress) => {
+        setUploadProgress(progress);
+        // Calculate and update estimated time
+        if (progress > 0 && uploadStartTime.current) {
+          const elapsedTime = (Date.now() - uploadStartTime.current) / 1000;
+          const estimatedTotalTime = elapsedTime / (progress / 100);
+          const remainingTime = estimatedTotalTime - elapsedTime;
+
+          if (remainingTime < 60) {
+            setEstimatedTime(`${Math.ceil(remainingTime)} seconds`);
+          } else {
+            setEstimatedTime(`${Math.ceil(remainingTime / 60)} minutes`);
+          }
+        }
+      },
+      // Success callback
+      () => {
+        setIsProcessing(false);
+        setShowConfirmationModal(true);
+        setShowEmailModal(false);
+        setFile(null);
+        setUploadProgress(0);
+        setEstimatedTime("");
+      },
+      // Error callback
+      (errorMsg) => {
+        setIsProcessing(false);
+        setError(errorMsg);
+        setUploadProgress(0);
+        setEstimatedTime("");
+      },
+    );
   };
 
+  /**
+   * Handles file selection with validation
+   */
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
+
+    // Reset the input value so that the same file can be selected again
+    e.target.value = "";
+
     if (selectedFile) {
+      // Validate file type
       if (!selectedFile.name.toLowerCase().endsWith(".pdf")) {
         setError("Only PDF files are supported");
         return;
       }
 
+      // Validate file size (50MB max)
       if (selectedFile.size > 50 * 1024 * 1024) {
         setError("File too large. Maximum size is 50MB");
         return;
       }
 
+      // Set file and reset related state
       setFile(selectedFile);
-      setConversionComplete(false);
-      setAudioUrl(null);
-      setText("");
       setError(null);
       setUploadProgress(0);
       setEstimatedTime("");
     }
   };
 
-  // Modified upload function to show modal
+  /**
+   * Shows email modal when user clicks convert button
+   */
   const handleUploadPdf = () => {
     if (!file) {
       setError("Please select a PDF file first");
       return;
     }
-
     setShowEmailModal(true);
   };
 
-  const handlePlayAudio = () => {
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
+  /**
+   * Clears selected file and resets related state
+   */
   const handleClearFile = () => {
     setFile(null);
-    setAudioUrl(null);
-    setText("");
-    setConversionComplete(false);
     setError(null);
     setEmail("");
     setUploadProgress(0);
     setEstimatedTime("");
   };
 
-  const handleDownloadAudio = () => {
-    if (audioUrl) {
-      setError(
-        "Live streaming download requires a separate endpoint. For download support, contact support.",
-      );
-    }
-  };
-
+  // Step-by-step process guide
   const steps = [
     {
       number: "01",
@@ -370,13 +311,12 @@ export default function Home() {
     },
   ];
 
+  // Clean up audio URL on component unmount
   useEffect(() => {
     return () => {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
+      // No audio URL cleanup needed in current implementation
     };
-  }, [audioUrl]);
+  }, []);
 
   return (
     <div
@@ -386,6 +326,7 @@ export default function Home() {
           : "bg-linear-to-br from-blue-50 via-white to-indigo-50/30 text-gray-900"
       }`}
     >
+      {/* External Fonts */}
       <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=Montserrat:wght@300;400;500;600;700&display=swap"
         rel="stylesheet"
@@ -398,16 +339,16 @@ export default function Home() {
         <div className="absolute bottom-1/4 right-1/3 w-40 h-40 bg-indigo-500/10 rounded-full blur-3xl animate-pulse delay-500"></div>
       </div>
 
-      {/* Email Modal */}
+      {/* Email Input Modal */}
       {showEmailModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-          {/* Backdrop */}
+          {/* Modal Backdrop */}
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => !isProcessing && setShowEmailModal(false)}
           />
 
-          {/* Modal */}
+          {/* Modal Content */}
           <div
             className={`relative z-10 w-full max-w-md rounded-3xl p-8 backdrop-blur-lg shadow-2xl border transition-all duration-300 animate-slide-up ${
               darkMode
@@ -415,7 +356,7 @@ export default function Home() {
                 : "bg-linear-to-br from-white/90 to-white/70 border-white/30"
             }`}
           >
-            {/* Close Button */}
+            {/* Close Button (hidden during processing) */}
             {!isProcessing && (
               <button
                 onClick={() => setShowEmailModal(false)}
@@ -429,6 +370,7 @@ export default function Home() {
               </button>
             )}
 
+            {/* Modal Header */}
             <div className="flex items-center space-x-3 mb-6">
               <div
                 className={`p-3 rounded-xl ${
@@ -452,7 +394,7 @@ export default function Home() {
             </div>
 
             <div className="space-y-6">
-              {/* File info */}
+              {/* Selected File Info */}
               {file && (
                 <div
                   className={`p-4 rounded-xl border ${
@@ -477,6 +419,7 @@ export default function Home() {
                 </div>
               )}
 
+              {/* Processing Time Info */}
               <div
                 className={`p-4 rounded-xl ${
                   darkMode
@@ -504,7 +447,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Upload Progress */}
+              {/* Upload Progress Display */}
               {isProcessing && (
                 <div className="space-y-4">
                   <div className="space-y-2">
@@ -539,6 +482,7 @@ export default function Home() {
                       )}
                   </div>
 
+                  {/* Upload Status Message */}
                   {uploadProgress > 0 && (
                     <div
                       className={`p-3 rounded-lg text-center ${
@@ -560,7 +504,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Email Input (only show when not processing) */}
+              {/* Email Input Form (only when not processing) */}
               {!isProcessing && (
                 <div className="space-y-3">
                   <div>
@@ -569,7 +513,10 @@ export default function Home() {
                         darkMode ? "text-gray-300" : "text-gray-700"
                       }`}
                     >
-                      Email Address
+                      Email Address{" "}
+                      <span className="text-xs text-gray-500">
+                        (no temporary emails)
+                      </span>
                     </label>
                     <div className="relative">
                       <input
@@ -582,7 +529,7 @@ export default function Home() {
                             ? "bg-white/10 border border-white/20 focus:border-blue-500 text-white"
                             : "bg-white/60 border border-gray-200 focus:border-blue-400 text-gray-900"
                         } focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed`}
-                        placeholder="you@example.com"
+                        placeholder="you@gmail.com"
                       />
                       <Mail
                         className={`absolute right-3 top-3 h-5 w-5 ${
@@ -597,17 +544,23 @@ export default function Home() {
                     )}
                   </div>
 
+                  {/* Email Usage Info */}
                   <div
                     className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}
                   >
+                    <p className="mb-1">
+                      <strong>Accepted:</strong> Gmail, Outlook, Yahoo, iCloud,
+                      AOL, ProtonMail, and common work/school emails
+                    </p>
                     <p>
-                      We'll send the MP3 audio file to this email address once
-                      conversion is complete.
+                      <strong>Not accepted:</strong> Temporary/disposable emails
+                      (Mailinator, Yopmail, 10MinuteMail, etc.)
                     </p>
                   </div>
                 </div>
               )}
 
+              {/* Modal Action Buttons */}
               <div className="flex space-x-3 pt-2">
                 {!isProcessing && (
                   <button
@@ -649,16 +602,16 @@ export default function Home() {
         </div>
       )}
 
-      {/* Confirmation Modal */}
+      {/* Confirmation Success Modal */}
       {showConfirmationModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-          {/* Backdrop */}
+          {/* Modal Backdrop */}
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={() => setShowConfirmationModal(false)}
           />
 
-          {/* Modal */}
+          {/* Modal Content */}
           <div
             className={`relative z-10 w-full max-w-md rounded-3xl p-8 backdrop-blur-lg shadow-2xl border transition-all duration-300 animate-slide-up ${
               darkMode
@@ -678,12 +631,13 @@ export default function Home() {
                 <CheckCircle className="h-16 w-16 text-emerald-500 animate-scale-up" />
               </div>
 
-              {/* Content */}
+              {/* Success Message */}
               <div className="space-y-4">
                 <h2 className="text-2xl font-bold font-heading">
                   Processing Started!
                 </h2>
 
+                {/* Email Confirmation */}
                 <div
                   className={`p-4 rounded-xl ${
                     darkMode
@@ -712,6 +666,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Processing Time Info */}
                 <div
                   className={`p-4 rounded-xl ${
                     darkMode
@@ -739,6 +694,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* Additional Info */}
                 <div
                   className={`text-sm ${darkMode ? "text-gray-300" : "text-gray-600"}`}
                 >
@@ -750,7 +706,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Action Button */}
+              {/* Close Button */}
               <button
                 onClick={() => setShowConfirmationModal(false)}
                 className={`w-full py-3 rounded-xl font-medium transition-all duration-300 shadow-lg ${
@@ -762,7 +718,7 @@ export default function Home() {
                 Got it, thank you!
               </button>
 
-              {/* Note */}
+              {/* Helpful Note */}
               <p
                 className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}
               >
@@ -774,9 +730,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Main Header */}
       <header className="relative px-4 py-6 md:px-8 lg:px-16">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
+          {/* Logo and Brand */}
           <div className="flex items-center space-x-3">
             <div
               className={`p-2 rounded-xl backdrop-blur-sm transition-all duration-300 ${
@@ -797,6 +754,7 @@ export default function Home() {
             </div>
           </div>
 
+          {/* Dark Mode Toggle */}
           <div className="flex items-center space-x-4">
             <button
               onClick={() => setDarkMode(!darkMode)}
@@ -816,10 +774,12 @@ export default function Home() {
         </div>
       </header>
 
+      {/* Main Content */}
       <main className="relative px-4 py-12 md:px-8 lg:px-16">
         <div className="max-w-7xl mx-auto">
           {/* Hero Section */}
           <section className="text-center mb-16 pt-8 animate-fade-in">
+            {/* Badge */}
             <div
               className={`inline-flex items-center space-x-2 mb-6 px-5 py-2.5 rounded-full backdrop-blur-sm ${
                 darkMode
@@ -833,6 +793,7 @@ export default function Home() {
               </span>
             </div>
 
+            {/* Main Heading */}
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold mb-6 max-w-5xl mx-auto animate-slide-up leading-tight font-display">
               <span className="bg-linear-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
                 Convert PDFs
@@ -849,6 +810,7 @@ export default function Home() {
               </span>
             </h1>
 
+            {/* Description */}
             <p
               className={`text-lg md:text-xl mb-10 max-w-3xl mx-auto animate-slide-up delay-100 leading-relaxed font-body ${
                 darkMode ? "text-gray-300/90" : "text-gray-600/90"
@@ -858,6 +820,7 @@ export default function Home() {
               via email. Perfect for listening on the go.
             </p>
 
+            {/* Feature Tags */}
             <div className="flex flex-wrap justify-center gap-4 mb-8">
               <div
                 className={`px-4 py-2 rounded-full backdrop-blur-sm ${
@@ -895,7 +858,7 @@ export default function Home() {
           {/* Main Conversion Section */}
           <section className="mb-20">
             <div className="grid lg:grid-cols-2 gap-8">
-              {/* Upload & Conversion Card */}
+              {/* Left Column: Upload Area */}
               <div
                 className={`rounded-3xl p-8 backdrop-blur-lg shadow-2xl transition-all duration-300 hover:shadow-3xl border ${
                   darkMode
@@ -918,6 +881,7 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* File Upload Area */}
                 <div className="mb-8">
                   <div className="flex items-center justify-center w-full">
                     <label
@@ -930,6 +894,7 @@ export default function Home() {
                       <div className="flex flex-col items-center justify-center pt-5 pb-6 p-4">
                         {file ? (
                           <>
+                            {/* File Selected State */}
                             <div className="relative">
                               <FileAudio className="h-12 w-12 text-blue-500 mb-4 animate-bounce" />
                               <div className="absolute -top-1 -right-1 h-5 w-5 bg-green-500 rounded-full animate-pulse"></div>
@@ -965,6 +930,7 @@ export default function Home() {
                           </>
                         ) : (
                           <>
+                            {/* No File State */}
                             <Upload
                               className={`h-12 w-12 mb-4 transition-transform group-hover:scale-110 ${
                                 darkMode ? "text-gray-400" : "text-gray-400"
@@ -1008,6 +974,7 @@ export default function Home() {
                     </label>
                   </div>
 
+                  {/* Error Display */}
                   {error && (
                     <div
                       className={`mt-4 p-4 rounded-xl border backdrop-blur-sm animate-shake ${
@@ -1024,37 +991,25 @@ export default function Home() {
                   )}
                 </div>
 
+                {/* Convert Button */}
                 <div className="space-y-4">
                   <button
                     onClick={handleUploadPdf}
-                    disabled={!file || isUploading}
-                    className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center group relative overflow-hidden font-heading ${
-                      conversionComplete
-                        ? "bg-linear-to-r from-green-500 to-emerald-500 hover:shadow-green-500/25"
-                        : "bg-linear-to-r from-blue-500 to-purple-500 hover:shadow-blue-500/25"
-                    } hover:shadow-xl hover:-translate-y-0.5 text-white`}
+                    disabled={!file}
+                    className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg flex items-center justify-center group relative overflow-hidden font-heading bg-linear-to-r from-blue-500 to-purple-500 hover:shadow-blue-500/25 hover:shadow-xl hover:-translate-y-0.5 text-white`}
                   >
                     <div className="absolute inset-0 bg-linear-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                     <span className="relative z-10 flex items-center">
-                      {isUploading ? (
-                        <>
-                          <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3"></div>
-                          Uploading...
-                        </>
-                      ) : (
-                        <>
-                          <Headphones className="h-6 w-6 mr-3 group-hover:scale-110 transition-transform" />
-                          Convert to Audio
-                        </>
-                      )}
+                      <Headphones className="h-6 w-6 mr-3 group-hover:scale-110 transition-transform" />
+                      Convert to Audio
                     </span>
                   </button>
                 </div>
               </div>
 
-              {/* Right Column - Steps & Features */}
+              {/* Right Column: Steps and Features */}
               <div className="space-y-6">
-                {/* Steps */}
+                {/* How It Works Steps */}
                 <div
                   className={`rounded-3xl p-6 backdrop-blur-lg shadow-xl border ${
                     darkMode
@@ -1110,7 +1065,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Features */}
+                {/* Key Features */}
                 <div
                   className={`rounded-3xl p-6 backdrop-blur-lg shadow-xl border ${
                     darkMode
@@ -1180,9 +1135,9 @@ export default function Home() {
                 : "bg-white border-gray-200"
             } shadow-lg sm:shadow-xl`}
           >
-            {/* Mobile Stack Layout */}
+            {/* Mobile Layout */}
             <div className="flex flex-col space-y-4 sm:hidden">
-              {/* Top Row - Logo & Copyright */}
+              {/* Logo and Copyright */}
               <div className="flex justify-between items-center">
                 <div className="flex items-center space-x-2">
                   <div
@@ -1214,7 +1169,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Middle Row - GitHub Link */}
+              {/* GitHub Link */}
               <div className="flex flex-col items-center space-y-2">
                 <p
                   className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}
@@ -1247,7 +1202,7 @@ export default function Home() {
                 </a>
               </div>
 
-              {/* Bottom Row - Full Copyright */}
+              {/* Copyright Text */}
               <div
                 className={`text-center ${darkMode ? "text-gray-400" : "text-gray-600"}`}
               >
@@ -1255,9 +1210,9 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Desktop Horizontal Layout */}
+            {/* Desktop Layout */}
             <div className="hidden sm:flex flex-row justify-between items-center">
-              {/* Left Side - Logo/Brand */}
+              {/* Logo */}
               <div className="flex items-center space-x-3">
                 <div
                   className={`p-2 rounded-lg ${
@@ -1280,7 +1235,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Middle Part - GitHub link */}
+              {/* GitHub Attribution */}
               <div className="flex flex-col items-center">
                 <div className="flex items-center space-x-2">
                   <p
@@ -1319,7 +1274,7 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Right Side - Copyright */}
+              {/* Copyright */}
               <div
                 className={`text-right ${
                   darkMode ? "text-gray-400" : "text-gray-600"
@@ -1337,7 +1292,7 @@ export default function Home() {
         </div>
       </footer>
 
-      {/* Custom CSS */}
+      {/* Custom CSS Animations */}
       <style jsx global>{`
         @keyframes fade-in {
           from {
